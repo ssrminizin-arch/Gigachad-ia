@@ -42,7 +42,22 @@
   @apply bg-zinc-900 p-4 rounded-xl border border-zinc-800 my-4 overflow-x-auto;
 }
 
-.markdown-body ul, .markdown-body ol {
+.markdown-body ul {
   @apply mb-4 ml-4 list-disc;
+}
+
+.markdown-body ol {
+  @apply mb-4 ml-4 list-decimal;
+}
+
+.markdown-body li {
+  @apply mb-1;
+}
+
+/* Mobile specific fixes */
+@media (max-width: 640px) {
+  .markdown-body {
+    @apply text-[13px] leading-relaxed;
+  }
 }
 

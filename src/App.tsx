@@ -70,7 +70,7 @@ export default function App() {
   };
 
   return (
-    <div className="flex flex-col h-screen bg-[#050505] text-zinc-400 font-sans selection:bg-zinc-800 selection:text-white">
+    <div className="flex flex-col h-[100dvh] bg-[#050505] text-zinc-400 font-sans selection:bg-zinc-800 selection:text-white overflow-hidden">
       {/* Header */}
       <header className="flex items-center justify-between px-6 py-4 border-bottom border-zinc-900/50 bg-[#050505]/80 backdrop-blur-md sticky top-0 z-10">
         <div className="flex items-center gap-3">
@@ -100,9 +100,10 @@ export default function App() {
       {/* Chat Area */}
       <main 
         ref={scrollRef}
-        className="flex-1 overflow-y-auto px-4 py-8 sm:px-6 md:px-8 max-w-4xl mx-auto w-full scroll-smooth"
+        className="flex-1 overflow-y-auto px-4 py-6 sm:px-6 md:px-8 w-full scroll-smooth min-h-0"
       >
-        <AnimatePresence mode="popLayout">
+        <div className="max-w-4xl mx-auto w-full">
+          <AnimatePresence mode="popLayout">
           {messages.length === 0 ? (
             <motion.div 
               initial={{ opacity: 0, y: 20 }}
@@ -152,6 +153,7 @@ export default function App() {
             </div>
           </div>
         )}
+        </div>
       </main>
 
       {/* Input Area */}
