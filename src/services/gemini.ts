@@ -66,9 +66,14 @@ export class GeminiService {
       });
 
       for await (const chunk of stream) {
-        const text = (chunk as GenerateContentResponse).text;
-        if (text) {
-          yield text;
+        try {
+          const text = (chunk as GenerateContentResponse).text;
+          if (text) {
+            yield text;
+          }
+        } catch (e) {
+          console.warn("Erro ao ler chunk do stream:", e);
+          // Se houver erro ao ler o texto (ex: bloqueio), tentamos continuar ou paramos graciosamente
         }
       }
     } catch (error) {

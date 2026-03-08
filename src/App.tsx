@@ -5,6 +5,7 @@ import { ChatMessage } from "./components/ChatMessage";
 import { geminiService } from "./services/gemini";
 
 interface Message {
+  id: string;
   role: "user" | "model";
   content: string;
 }
@@ -25,44 +26,39 @@ export default function App() {
     if (!input.trim() || isLoading) return;
 
     const userMessage = input.trim();
+    const userMsgId = crypto.randomUUID();
+    const modelMsgId = crypto.randomUUID();
+
     setInput("");
-    setMessages((prev) => [...prev, { role: "user", content: userMessage }]);
+    setMessages((prev) => [...prev, { id: userMsgId, role: "user", content: userMessage }]);
     setIsLoading(true);
 
     try {
       const history = messages.map((msg) => ({
         role: msg.role,
-        parts: [{ text: msg.content }],
+        parts: [{ text: msg.content || "" }],
       }));
 
-      let assistantContent = "";
-      setMessages((prev) => [...prev, { role: "model", content: "" }]);
+      setMessages((prev) => [...prev, { id: modelMsgId, role: "model", content: "" }]);
 
       const stream = geminiService.sendMessageStream(userMessage, history);
       
-      let currentContent = "";
+      let accumulatedContent = "";
       for await (const chunk of stream) {
         if (chunk) {
-          currentContent += chunk;
-          setMessages((prev) => {
-            const lastMessage = prev[prev.length - 1];
-            if (lastMessage && lastMessage.role === "model") {
-              const newMessages = [...prev];
-              newMessages[newMessages.length - 1] = {
-                ...lastMessage,
-                content: currentContent,
-              };
-              return newMessages;
-            }
-            return prev;
-          });
+          accumulatedContent += chunk;
+          setMessages((prev) => 
+            prev.map((msg) => 
+              msg.id === modelMsgId ? { ...msg, content: accumulatedContent } : msg
+            )
+          );
         }
       }
     } catch (error) {
       console.error("Failed to send message:", error);
       setMessages((prev) => [
         ...prev,
-        { role: "model", content: "Erro na conexão. Tente novamente." },
+        { id: crypto.randomUUID(), role: "model", content: "Desculpe, tive um problema técnico. Tente novamente." },
       ]);
     } finally {
       setIsLoading(false);
@@ -140,8 +136,8 @@ export default function App() {
               </div>
             </motion.div>
           ) : (
-            messages.map((msg, idx) => (
-              <ChatMessage key={idx} role={msg.role} content={msg.content} />
+            messages.map((msg) => (
+              <ChatMessage key={msg.id} role={msg.role} content={msg.content} />
             ))
           )}
         </AnimatePresence>
