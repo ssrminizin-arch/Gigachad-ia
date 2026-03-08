@@ -12,7 +12,7 @@ const SAFETY_SETTINGS = [
 
 export class GeminiService {
   private ai: GoogleGenAI;
-  private readonly MODEL_NAME = "gemini-3.1-flash-lite-preview";
+  private readonly MODEL_NAME = "gemini-3-flash-preview";
 
   constructor() {
     const apiKey = process.env.GEMINI_API_KEY || (import.meta as any).env?.VITE_GEMINI_API_KEY;
@@ -33,10 +33,10 @@ export class GeminiService {
         config: {
           systemInstruction: SYSTEM_INSTRUCTION,
           safetySettings: SAFETY_SETTINGS,
-          temperature: 0.9,
+          temperature: 0.7,
           topP: 0.95,
           topK: 40,
-          maxOutputTokens: 2048,
+          maxOutputTokens: 8192,
         },
       });
 
@@ -58,15 +58,18 @@ export class GeminiService {
         config: {
           systemInstruction: SYSTEM_INSTRUCTION,
           safetySettings: SAFETY_SETTINGS,
-          temperature: 0.9,
+          temperature: 0.7,
           topP: 0.95,
           topK: 40,
-          maxOutputTokens: 2048,
+          maxOutputTokens: 8192,
         },
       });
 
       for await (const chunk of stream) {
-        yield (chunk as GenerateContentResponse).text;
+        const text = (chunk as GenerateContentResponse).text;
+        if (text) {
+          yield text;
+        }
       }
     } catch (error) {
       console.error("Error in Gemini stream:", error);

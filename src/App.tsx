@@ -40,16 +40,21 @@ export default function App() {
 
       const stream = geminiService.sendMessageStream(userMessage, history);
       
+      let currentContent = "";
       for await (const chunk of stream) {
         if (chunk) {
-          assistantContent += chunk;
+          currentContent += chunk;
           setMessages((prev) => {
-            const newMessages = [...prev];
-            newMessages[newMessages.length - 1] = {
-              role: "model",
-              content: assistantContent,
-            };
-            return newMessages;
+            const lastMessage = prev[prev.length - 1];
+            if (lastMessage && lastMessage.role === "model") {
+              const newMessages = [...prev];
+              newMessages[newMessages.length - 1] = {
+                ...lastMessage,
+                content: currentContent,
+              };
+              return newMessages;
+            }
+            return prev;
           });
         }
       }
