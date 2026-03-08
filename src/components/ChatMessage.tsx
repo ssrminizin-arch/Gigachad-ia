@@ -10,8 +10,6 @@ interface ChatMessageProps {
 export const ChatMessage = ({ role, content }: ChatMessageProps) => {
   const isUser = role === "user";
 
-  if (content === undefined || content === null) return null;
-
   return (
     <motion.div
       initial={{ opacity: 0, y: 10 }}
@@ -23,7 +21,7 @@ export const ChatMessage = ({ role, content }: ChatMessageProps) => {
     >
       <div
         className={cn(
-          "max-w-[85%] sm:max-w-[75%] px-4 py-3 rounded-2xl text-sm leading-relaxed",
+          "max-w-[85%] sm:max-w-[70%] px-4 py-3 rounded-2xl text-sm leading-relaxed",
           isUser
             ? "bg-zinc-800 text-zinc-100 rounded-tr-none border border-zinc-700/50"
             : "bg-zinc-900 text-zinc-300 rounded-tl-none border border-zinc-800"
@@ -34,10 +32,8 @@ export const ChatMessage = ({ role, content }: ChatMessageProps) => {
             {isUser ? "Você" : "GigaChad"}
           </span>
         </div>
-        <div className="prose prose-invert prose-sm max-w-none break-words whitespace-pre-wrap">
-          <ReactMarkdown>
-            {content || ""}
-          </ReactMarkdown>
+        <div className="prose prose-invert prose-sm max-w-none">
+          <ReactMarkdown>{content}</ReactMarkdown>
         </div>
       </div>
     </motion.div>
