@@ -12,7 +12,7 @@ const SAFETY_SETTINGS = [
 
 export class GeminiService {
   private ai: GoogleGenAI;
-  private readonly MODEL_NAME = "gemini-3-flash-preview";
+  private readonly MODEL_NAME = "gemini-3.1-flash-lite-preview";
 
   constructor() {
     const apiKey = process.env.GEMINI_API_KEY || (import.meta as any).env?.VITE_GEMINI_API_KEY;
@@ -25,7 +25,7 @@ export class GeminiService {
   async sendMessage(message: string, history: { role: "user" | "model"; parts: { text: string }[] }[] = []) {
     try {
       const response = await this.ai.models.generateContent({
-        model: "gemini-3.1-pro-preview",
+        model: this.MODEL_NAME,
         contents: [
           ...history,
           { role: "user", parts: [{ text: message }] }
@@ -33,10 +33,9 @@ export class GeminiService {
         config: {
           systemInstruction: SYSTEM_INSTRUCTION,
           safetySettings: SAFETY_SETTINGS,
-          temperature: 0.7,
+          temperature: 0.9,
           topP: 0.95,
           topK: 40,
-          maxOutputTokens: 8192,
         },
       });
 
@@ -50,7 +49,7 @@ export class GeminiService {
   async *sendMessageStream(message: string, history: { role: "user" | "model"; parts: { text: string }[] }[] = []) {
     try {
       const stream = await this.ai.models.generateContentStream({
-        model: "gemini-3.1-pro-preview",
+        model: this.MODEL_NAME,
         contents: [
           ...history,
           { role: "user", parts: [{ text: message }] }
@@ -58,23 +57,14 @@ export class GeminiService {
         config: {
           systemInstruction: SYSTEM_INSTRUCTION,
           safetySettings: SAFETY_SETTINGS,
-          temperature: 0.7,
+          temperature: 0.9,
           topP: 0.95,
           topK: 40,
-          maxOutputTokens: 8192,
         },
       });
 
       for await (const chunk of stream) {
-        try {
-          const text = (chunk as GenerateContentResponse).text;
-          if (text) {
-            yield text;
-          }
-        } catch (e) {
-          console.warn("Erro ao ler chunk do stream:", e);
-          // Se houver erro ao ler o texto (ex: bloqueio), tentamos continuar ou paramos graciosamente
-        }
+        yield (chunk as GenerateContentResponse).text;
       }
     } catch (error) {
       console.error("Error in Gemini stream:", error);

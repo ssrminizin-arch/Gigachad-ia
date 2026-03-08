@@ -5,7 +5,6 @@ import { ChatMessage } from "./components/ChatMessage";
 import { geminiService } from "./services/gemini";
 
 interface Message {
-  id: string;
   role: "user" | "model";
   content: string;
 }
@@ -26,54 +25,39 @@ export default function App() {
     if (!input.trim() || isLoading) return;
 
     const userMessage = input.trim();
-    const userMsgId = crypto.randomUUID();
-    const modelMsgId = crypto.randomUUID();
-
     setInput("");
-    setMessages((prev) => [...prev, { id: userMsgId, role: "user", content: userMessage }]);
+    setMessages((prev) => [...prev, { role: "user", content: userMessage }]);
     setIsLoading(true);
 
     try {
       const history = messages.map((msg) => ({
         role: msg.role,
-        parts: [{ text: msg.content || "" }],
+        parts: [{ text: msg.content }],
       }));
 
-      setMessages((prev) => [...prev, { id: modelMsgId, role: "model", content: "" }]);
+      let assistantContent = "";
+      setMessages((prev) => [...prev, { role: "model", content: "" }]);
 
       const stream = geminiService.sendMessageStream(userMessage, history);
       
-      let accumulatedContent = "";
-      let lastUpdate = Date.now();
-      
       for await (const chunk of stream) {
         if (chunk) {
-          accumulatedContent += chunk;
-          
-          // Throttle updates to improve mobile performance
-          const now = Date.now();
-          if (now - lastUpdate > 50) { 
-            setMessages((prev) => 
-              prev.map((msg) => 
-                msg.id === modelMsgId ? { ...msg, content: accumulatedContent } : msg
-              )
-            );
-            lastUpdate = now;
-          }
+          assistantContent += chunk;
+          setMessages((prev) => {
+            const newMessages = [...prev];
+            newMessages[newMessages.length - 1] = {
+              role: "model",
+              content: assistantContent,
+            };
+            return newMessages;
+          });
         }
       }
-      
-      // Final update to ensure everything is rendered
-      setMessages((prev) => 
-        prev.map((msg) => 
-          msg.id === modelMsgId ? { ...msg, content: accumulatedContent } : msg
-        )
-      );
     } catch (error) {
       console.error("Failed to send message:", error);
       setMessages((prev) => [
         ...prev,
-        { id: crypto.randomUUID(), role: "model", content: "Desculpe, tive um problema técnico. Tente novamente." },
+        { role: "model", content: "Erro na conexão. Tente novamente." },
       ]);
     } finally {
       setIsLoading(false);
@@ -85,7 +69,7 @@ export default function App() {
   };
 
   return (
-    <div className="flex flex-col h-[100dvh] bg-[#050505] text-zinc-400 font-sans selection:bg-zinc-800 selection:text-white overflow-hidden">
+    <div className="flex flex-col h-screen bg-[#050505] text-zinc-400 font-sans selection:bg-zinc-800 selection:text-white">
       {/* Header */}
       <header className="flex items-center justify-between px-6 py-4 border-bottom border-zinc-900/50 bg-[#050505]/80 backdrop-blur-md sticky top-0 z-10">
         <div className="flex items-center gap-3">
@@ -151,8 +135,8 @@ export default function App() {
               </div>
             </motion.div>
           ) : (
-            messages.map((msg) => (
-              <ChatMessage key={msg.id} role={msg.role} content={msg.content} />
+            messages.map((msg, idx) => (
+              <ChatMessage key={idx} role={msg.role} content={msg.content} />
             ))
           )}
         </AnimatePresence>
