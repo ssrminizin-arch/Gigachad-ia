@@ -15,11 +15,11 @@ export class GeminiService {
   private readonly MODEL_NAME = "gemini-3.1-flash-lite-preview";
 
   constructor() {
-    const apiKey = process.env.GEMINI_API_KEY;
+    const apiKey = process.env.GEMINI_API_KEY || (import.meta as any).env?.VITE_GEMINI_API_KEY;
     if (!apiKey) {
-      throw new Error("GEMINI_API_KEY is not defined");
+      console.error("ERRO: GEMINI_API_KEY não encontrada. Certifique-se de configurar as Variáveis de Ambiente (Environment Variables) na sua plataforma de hospedagem.");
     }
-    this.ai = new GoogleGenAI({ apiKey });
+    this.ai = new GoogleGenAI({ apiKey: apiKey || "" });
   }
 
   async sendMessage(message: string, history: { role: "user" | "model"; parts: { text: string }[] }[] = []) {
@@ -36,6 +36,7 @@ export class GeminiService {
           temperature: 0.9,
           topP: 0.95,
           topK: 40,
+          maxOutputTokens: 2048,
         },
       });
 
@@ -60,6 +61,7 @@ export class GeminiService {
           temperature: 0.9,
           topP: 0.95,
           topK: 40,
+          maxOutputTokens: 2048,
         },
       });
 
