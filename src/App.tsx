@@ -69,12 +69,12 @@ export default function App() {
   };
 
   return (
-    <div className="flex flex-col h-screen bg-[#050505] text-zinc-400 font-sans selection:bg-zinc-800 selection:text-white">
+    <div className="flex flex-col h-[100dvh] bg-gradient-to-t from-zinc-900 to-black text-zinc-400 font-sans selection:bg-zinc-800 selection:text-white overflow-hidden">
       {/* Header */}
-      <header className="flex items-center justify-between px-6 py-4 border-bottom border-zinc-900/50 bg-[#050505]/80 backdrop-blur-md sticky top-0 z-10">
+      <header className="flex items-center justify-between px-6 py-4 border-b border-zinc-800/30 bg-black/10 backdrop-blur-md sticky top-0 z-10">
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-zinc-800 flex items-center justify-center border border-zinc-700/50">
-            <User className="w-5 h-5 text-zinc-100" />
+          <div className="w-8 h-8 rounded-lg bg-zinc-800 flex items-center justify-center border border-zinc-700/50 text-lg">
+            🗿
           </div>
           <div>
             <h1 className="text-sm font-bold text-zinc-100 tracking-tight uppercase">GigaChat</h1>
@@ -99,17 +99,17 @@ export default function App() {
       {/* Chat Area */}
       <main 
         ref={scrollRef}
-        className="flex-1 overflow-y-auto px-4 py-8 sm:px-6 md:px-8 max-w-4xl mx-auto w-full scroll-smooth"
+        className="flex-1 overflow-y-auto px-4 py-8 sm:px-6 md:px-8 max-w-4xl mx-auto w-full scroll-smooth overscroll-contain"
       >
         <AnimatePresence mode="popLayout">
           {messages.length === 0 ? (
             <motion.div 
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
-              className="h-full flex flex-col items-center justify-center text-center space-y-6 px-4"
+              className="min-h-full flex flex-col items-center justify-center text-center space-y-6 px-4 py-12"
             >
-              <div className="w-16 h-16 rounded-2xl bg-zinc-900 border border-zinc-800 flex items-center justify-center mb-2">
-                <Zap className="w-8 h-8 text-zinc-100" />
+              <div className="w-16 h-16 rounded-2xl bg-zinc-900 border border-zinc-800 flex items-center justify-center mb-2 text-3xl">
+                🗿
               </div>
               <div className="space-y-2">
                 <h2 className="text-2xl font-light text-zinc-100 tracking-tight">GigaChad AI</h2>
@@ -117,7 +117,7 @@ export default function App() {
                   Sem filtros. Sem desculpas. Apenas a verdade fria e pragmática.
                 </p>
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full max-w-md mt-8">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 w-full max-w-md mt-4 sm:mt-8">
                 {[
                   "Como ser mais produtivo?",
                   "Dê-me um treino pesado.",
@@ -127,7 +127,7 @@ export default function App() {
                   <button
                     key={suggestion}
                     onClick={() => setInput(suggestion)}
-                    className="p-4 text-xs text-left bg-zinc-900/50 hover:bg-zinc-900 border border-zinc-800 rounded-xl transition-all hover:border-zinc-700 text-zinc-400 hover:text-zinc-200"
+                    className="p-3 sm:p-4 text-[10px] sm:text-xs text-left bg-zinc-900/50 hover:bg-zinc-900 border border-zinc-800 rounded-xl transition-all hover:border-zinc-700 text-zinc-400 hover:text-zinc-200"
                   >
                     {suggestion}
                   </button>
@@ -154,7 +154,7 @@ export default function App() {
       </main>
 
       {/* Input Area */}
-      <footer className="p-4 sm:p-6 bg-gradient-to-t from-[#050505] to-transparent">
+      <footer className="p-4 sm:p-6 bg-transparent">
         <div className="max-w-4xl mx-auto w-full relative">
           <div className="relative flex items-center">
             <input
@@ -182,6 +182,11 @@ export default function App() {
               <Zap className="w-3 h-3" />
               <span>High Performance</span>
             </div>
+          </div>
+          <div className="mt-2 text-center">
+            <p className="text-[8px] text-zinc-600 font-medium uppercase tracking-tight">
+              Dica: Se as falas estiverem cortando, use a opção "site para computador"
+            </p>
           </div>
         </div>
       </footer>

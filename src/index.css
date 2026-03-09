@@ -43,6 +43,18 @@
 }
 
 .markdown-body ul, .markdown-body ol {
-  @apply mb-4 ml-4 list-disc;
+  @apply mb-4 ml-6 list-disc space-y-2;
+}
+
+.markdown-body li {
+  @apply text-zinc-300;
+}
+
+.markdown-body strong {
+  @apply text-zinc-100 font-bold;
+}
+
+.markdown-body blockquote {
+  @apply border-l-2 border-zinc-700 pl-4 italic text-zinc-400 my-4;
 }
 
