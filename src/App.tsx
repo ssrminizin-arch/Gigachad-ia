@@ -46,9 +46,9 @@ export default function App() {
         if (chunk) {
           assistantContent += chunk;
           
-          // Optimization: Only update state every 60ms during streaming to prevent mobile lag
+          // Optimization: Only update state every 30ms during streaming to prevent mobile lag
           const now = Date.now();
-          if (now - lastUpdateTime > 60) {
+          if (now - lastUpdateTime > 30) {
             setMessages((prev) => {
               const newMessages = [...prev];
               const lastMessage = newMessages[newMessages.length - 1];
@@ -176,10 +176,13 @@ export default function App() {
         {isLoading && messages[messages.length - 1]?.role === "user" && (
           <div className="flex justify-start mb-6">
             <div className="bg-zinc-900 px-4 py-3 rounded-2xl rounded-tl-none border border-zinc-800">
-              <div className="flex gap-1">
-                <span className="w-1.5 h-1.5 bg-zinc-600 rounded-full animate-bounce" />
-                <span className="w-1.5 h-1.5 bg-zinc-600 rounded-full animate-bounce [animation-delay:0.2s]" />
-                <span className="w-1.5 h-1.5 bg-zinc-600 rounded-full animate-bounce [animation-delay:0.4s]" />
+              <div className="flex items-center gap-2">
+                <div className="flex gap-1">
+                  <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-bounce" />
+                  <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-bounce [animation-delay:0.2s]" />
+                  <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-bounce [animation-delay:0.4s]" />
+                </div>
+                <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider">Chad está pensando...</span>
               </div>
             </div>
           </div>
