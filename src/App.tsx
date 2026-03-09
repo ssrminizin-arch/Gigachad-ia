@@ -110,7 +110,7 @@ export default function App() {
             🗿
           </div>
           <div>
-            <h1 className="text-sm font-bold text-zinc-100 tracking-tight uppercase">GigaChat</h1>
+            <h1 className="text-sm font-bold text-zinc-100 tracking-tight uppercase">GigaChad</h1>
             <div className="flex items-center gap-1.5">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
               <span className="text-[10px] font-medium text-zinc-500 uppercase tracking-widest">Online</span>
