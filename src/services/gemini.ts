@@ -22,9 +22,33 @@ export class GeminiService {
     this.ai = new GoogleGenAI({ apiKey: apiKey || "" });
   }
 
+  private cleanHistory(history: { role: "user" | "model"; parts: { text: string }[] }[]) {
+    // 1. Filter out messages that are empty or contain error keywords
+    const filtered = history.filter(msg => {
+      const text = msg.parts[0]?.text || "";
+      return text.length > 0 && 
+             !text.includes("Erro de conexão") && 
+             !text.includes("Erro na conexão") &&
+             !text.includes("Tente novamente");
+    });
+
+    // 2. Ensure alternating roles (user, model, user, model...)
+    const alternating: { role: "user" | "model"; parts: { text: string }[] }[] = [];
+    let lastRole: string | null = null;
+
+    for (const msg of filtered) {
+      if (msg.role !== lastRole) {
+        alternating.push(msg);
+        lastRole = msg.role;
+      }
+    }
+
+    // 3. Limit to last 10 messages
+    return alternating.slice(-10);
+  }
+
   async sendMessage(message: string, history: { role: "user" | "model"; parts: { text: string }[] }[] = []) {
-    // Limit history to last 10 messages to save memory and prevent timeouts
-    const limitedHistory = history.slice(-10);
+    const cleanedHistory = this.cleanHistory(history);
     
     let retries = 3;
     while (retries > 0) {
@@ -32,7 +56,7 @@ export class GeminiService {
         const response = await this.ai.models.generateContent({
           model: this.MODEL_NAME,
           contents: [
-            ...limitedHistory,
+            ...cleanedHistory,
             { role: "user", parts: [{ text: message }] }
           ],
           config: {
@@ -49,38 +73,43 @@ export class GeminiService {
         retries--;
         console.error(`Error calling Gemini API (Retries left: ${retries}):`, error);
         if (retries === 0) throw error;
-        await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1s before retry
+        await new Promise(resolve => setTimeout(resolve, 1500)); // Increased wait
       }
     }
   }
 
   async *sendMessageStream(message: string, history: { role: "user" | "model"; parts: { text: string }[] }[] = []) {
-    // Limit history to last 10 messages
-    const limitedHistory = history.slice(-10);
+    const cleanedHistory = this.cleanHistory(history);
 
-    try {
-      const stream = await this.ai.models.generateContentStream({
-        model: this.MODEL_NAME,
-        contents: [
-          ...limitedHistory,
-          { role: "user", parts: [{ text: message }] }
-        ],
-        config: {
-          systemInstruction: SYSTEM_INSTRUCTION,
-          safetySettings: SAFETY_SETTINGS,
-          temperature: 0.9,
-          topP: 0.95,
-          topK: 40,
-        },
-      });
+    let retries = 2;
+    while (retries >= 0) {
+      try {
+        const stream = await this.ai.models.generateContentStream({
+          model: this.MODEL_NAME,
+          contents: [
+            ...cleanedHistory,
+            { role: "user", parts: [{ text: message }] }
+          ],
+          config: {
+            systemInstruction: SYSTEM_INSTRUCTION,
+            safetySettings: SAFETY_SETTINGS,
+            temperature: 0.9,
+            topP: 0.95,
+            topK: 40,
+          },
+        });
 
-      for await (const chunk of stream) {
-        const text = (chunk as GenerateContentResponse).text;
-        if (text) yield text;
+        for await (const chunk of stream) {
+          const text = (chunk as GenerateContentResponse).text;
+          if (text) yield text;
+        }
+        return; // Success
+      } catch (error) {
+        retries--;
+        console.error(`Stream error (Retries left: ${retries}):`, error);
+        if (retries < 0) throw error;
+        await new Promise(resolve => setTimeout(resolve, 1500));
       }
-    } catch (error) {
-      console.error("Error in Gemini stream:", error);
-      throw error;
     }
   }
 }
