@@ -40,25 +40,58 @@ export default function App() {
 
       const stream = geminiService.sendMessageStream(userMessage, history);
       
+      let lastUpdateTime = Date.now();
+      
       for await (const chunk of stream) {
         if (chunk) {
           assistantContent += chunk;
-          setMessages((prev) => {
-            const newMessages = [...prev];
-            newMessages[newMessages.length - 1] = {
-              role: "model",
-              content: assistantContent,
-            };
-            return newMessages;
-          });
+          
+          // Optimization: Only update state every 60ms during streaming to prevent mobile lag
+          const now = Date.now();
+          if (now - lastUpdateTime > 60) {
+            setMessages((prev) => {
+              const newMessages = [...prev];
+              const lastMessage = newMessages[newMessages.length - 1];
+              if (lastMessage && lastMessage.role === "model") {
+                newMessages[newMessages.length - 1] = {
+                  role: "model",
+                  content: assistantContent,
+                };
+              }
+              return newMessages;
+            });
+            lastUpdateTime = now;
+          }
         }
       }
-    } catch (error) {
+      
+      // Final update to ensure everything is rendered
+      setMessages((prev) => {
+        const newMessages = [...prev];
+        const lastMessage = newMessages[newMessages.length - 1];
+        if (lastMessage && lastMessage.role === "model") {
+          newMessages[newMessages.length - 1] = {
+            role: "model",
+            content: assistantContent,
+          };
+        }
+        return newMessages;
+      });
+
+    } catch (error: any) {
       console.error("Failed to send message:", error);
-      setMessages((prev) => [
-        ...prev,
-        { role: "model", content: "Erro na conexão. Tente novamente." },
-      ]);
+      const errorMessage = error?.message?.includes("fetch") 
+        ? "Erro de conexão. Verifique sua internet." 
+        : "O Chad encontrou um erro. Tente novamente.";
+        
+      setMessages((prev) => {
+        const newMessages = [...prev];
+        if (newMessages[newMessages.length - 1]?.role === "model" && !newMessages[newMessages.length - 1].content) {
+          newMessages[newMessages.length - 1].content = errorMessage;
+          return newMessages;
+        }
+        return [...prev, { role: "model", content: errorMessage }];
+      });
     } finally {
       setIsLoading(false);
     }
@@ -101,7 +134,7 @@ export default function App() {
         ref={scrollRef}
         className="flex-1 overflow-y-auto px-4 py-8 sm:px-6 md:px-8 max-w-4xl mx-auto w-full scroll-smooth overscroll-contain"
       >
-        <AnimatePresence mode="popLayout">
+        <AnimatePresence>
           {messages.length === 0 ? (
             <motion.div 
               initial={{ opacity: 0, y: 20 }}
