@@ -27,14 +27,21 @@ export const ChatMessage = ({ role, content }: ChatMessageProps) => {
             : "bg-zinc-900/80 text-zinc-300 rounded-tl-none border border-zinc-800 backdrop-blur-sm"
         )}
       >
-        <div className="flex items-center gap-2 mb-3 border-b border-zinc-800/50 pb-2">
-          <span className={cn(
-            "text-[9px] font-black uppercase tracking-[0.2em]",
-            isUser ? "text-zinc-400" : "text-emerald-500"
-          )}>
-            {isUser ? "USUÁRIO" : "GIGACHAD"}
-          </span>
-          {!isUser && <span className="w-1 h-1 rounded-full bg-emerald-500 animate-pulse" />}
+        <div className="flex items-center justify-between mb-3 border-b border-zinc-800/50 pb-2">
+          <div className="flex items-center gap-2">
+            <span className={cn(
+              "text-[9px] font-black uppercase tracking-[0.2em]",
+              isUser ? "text-zinc-400" : "text-emerald-500"
+            )}>
+              {isUser ? "USUÁRIO" : "GIGACHAD"}
+            </span>
+            {!isUser && <span className="w-1 h-1 rounded-full bg-emerald-500 animate-pulse" />}
+          </div>
+          {!isUser && (
+            <span className="text-[8px] text-zinc-500 font-bold uppercase tracking-tight sm:hidden whitespace-nowrap ml-2">
+              Texto cortado? Use "Site para Computador"
+            </span>
+          )}
         </div>
         <div className="markdown-body">
           <ReactMarkdown>{content}</ReactMarkdown>
