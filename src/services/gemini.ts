@@ -12,12 +12,15 @@ const SAFETY_SETTINGS = [
 
 export class GeminiService {
   private ai: GoogleGenAI;
-  private readonly MODEL_NAME = "gemini-3.1-flash-lite-preview";
+  private readonly MODEL_NAME = "gemini-3-flash-preview";
 
   constructor() {
-    const apiKey = process.env.GEMINI_API_KEY || (import.meta as any).env?.VITE_GEMINI_API_KEY;
+    // In AI Studio, GEMINI_API_KEY is usually injected via process.env
+    // We also check for VITE_ prefix as a fallback for local dev
+    const apiKey = (process.env as any).GEMINI_API_KEY || (import.meta as any).env?.VITE_GEMINI_API_KEY;
+    
     if (!apiKey) {
-      console.error("ERRO: GEMINI_API_KEY não encontrada. Certifique-se de configurar as Variáveis de Ambiente (Environment Variables) na sua plataforma de hospedagem.");
+      console.warn("GEMINI_API_KEY not found. The AI might not respond. Please set it in the environment variables.");
     }
     this.ai = new GoogleGenAI({ apiKey: apiKey || "" });
   }

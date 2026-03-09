@@ -80,9 +80,15 @@ export default function App() {
 
     } catch (error: any) {
       console.error("Failed to send message:", error);
-      const errorMessage = error?.message?.includes("fetch") 
-        ? "Erro de conexão. Verifique sua internet." 
-        : "O Chad encontrou um erro. Tente novamente.";
+      let errorMessage = "O Chad encontrou um erro. Tente novamente.";
+      
+      if (error?.message?.includes("fetch")) {
+        errorMessage = "Erro de conexão. Verifique sua internet.";
+      } else if (error?.message?.includes("API key")) {
+        errorMessage = "Chave de API não encontrada ou inválida. Configure o GEMINI_API_KEY nos segredos.";
+      } else if (error?.message?.includes("safety")) {
+        errorMessage = "O conteúdo foi bloqueado pelos filtros de segurança.";
+      }
         
       setMessages((prev) => {
         const newMessages = [...prev];
