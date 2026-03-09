@@ -11,18 +11,20 @@ const SAFETY_SETTINGS = [
 ];
 
 export class GeminiService {
-  private ai: GoogleGenAI;
-  private readonly MODEL_NAME = "gemini-3-flash-preview";
+  private ai: GoogleGenAI | null = null;
+  private readonly MODEL_NAME = "gemini-flash-latest";
 
-  constructor() {
-    // In AI Studio, GEMINI_API_KEY is usually injected via process.env
-    // We also check for VITE_ prefix as a fallback for local dev
+  private getAI() {
+    if (this.ai) return this.ai;
+    
     const apiKey = (process.env as any).GEMINI_API_KEY || (import.meta as any).env?.VITE_GEMINI_API_KEY;
     
     if (!apiKey) {
-      console.warn("GEMINI_API_KEY not found. The AI might not respond. Please set it in the environment variables.");
+      throw new Error("API Key (GEMINI_API_KEY) não encontrada. Configure-a nos segredos do projeto.");
     }
-    this.ai = new GoogleGenAI({ apiKey: apiKey || "" });
+    
+    this.ai = new GoogleGenAI({ apiKey });
+    return this.ai;
   }
 
   private cleanHistory(history: { role: "user" | "model"; parts: { text: string }[] }[]) {
@@ -52,11 +54,12 @@ export class GeminiService {
 
   async sendMessage(message: string, history: { role: "user" | "model"; parts: { text: string }[] }[] = []) {
     const cleanedHistory = this.cleanHistory(history);
+    const ai = this.getAI();
     
     let retries = 3;
     while (retries > 0) {
       try {
-        const response = await this.ai.models.generateContent({
+        const response = await ai.models.generateContent({
           model: this.MODEL_NAME,
           contents: [
             ...cleanedHistory,
@@ -83,11 +86,12 @@ export class GeminiService {
 
   async *sendMessageStream(message: string, history: { role: "user" | "model"; parts: { text: string }[] }[] = []) {
     const cleanedHistory = this.cleanHistory(history);
+    const ai = this.getAI();
 
     let retries = 2;
     while (retries >= 0) {
       try {
-        const stream = await this.ai.models.generateContentStream({
+        const stream = await ai.models.generateContentStream({
           model: this.MODEL_NAME,
           contents: [
             ...cleanedHistory,

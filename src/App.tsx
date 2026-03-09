@@ -82,12 +82,16 @@ export default function App() {
       console.error("Failed to send message:", error);
       let errorMessage = "O Chad encontrou um erro. Tente novamente.";
       
-      if (error?.message?.includes("fetch")) {
+      const errorStr = error?.message?.toLowerCase() || "";
+      
+      if (errorStr.includes("fetch")) {
         errorMessage = "Erro de conexão. Verifique sua internet.";
-      } else if (error?.message?.includes("API key")) {
-        errorMessage = "Chave de API não encontrada ou inválida. Configure o GEMINI_API_KEY nos segredos.";
-      } else if (error?.message?.includes("safety")) {
-        errorMessage = "O conteúdo foi bloqueado pelos filtros de segurança.";
+      } else if (errorStr.includes("api key") || errorStr.includes("apikey")) {
+        errorMessage = "Chave de API não encontrada ou inválida. Configure o GEMINI_API_KEY nos segredos (Settings > Secrets).";
+      } else if (errorStr.includes("safety") || errorStr.includes("blocked")) {
+        errorMessage = "O conteúdo foi bloqueado pelos filtros de segurança da IA.";
+      } else if (error?.message) {
+        errorMessage = `Erro do Chad: ${error.message}`;
       }
         
       setMessages((prev) => {
