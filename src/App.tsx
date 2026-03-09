@@ -7,6 +7,7 @@ import { geminiService } from "./services/gemini";
 interface Message {
   role: "user" | "model";
   content: string;
+  errorDetails?: string;
 }
 
 export default function App() {
@@ -21,19 +22,27 @@ export default function App() {
     }
   }, [messages]);
 
-  const handleSend = async () => {
-    if (!input.trim() || isLoading) return;
+  const handleSend = async (retryMessage?: string) => {
+    const userMessage = retryMessage || input.trim();
+    if (!userMessage || isLoading) return;
 
-    const userMessage = input.trim();
-    setInput("");
-    setMessages((prev) => [...prev, { role: "user", content: userMessage }]);
+    if (!retryMessage) setInput("");
+    
+    // If it's a retry, we don't want to add the user message again to the list
+    if (!retryMessage) {
+      setMessages((prev) => [...prev, { role: "user", content: userMessage }]);
+    }
+    
     setIsLoading(true);
 
     try {
-      const history = messages.map((msg) => ({
-        role: msg.role,
-        parts: [{ text: msg.content }],
-      }));
+      // Filter out error messages from history for the API call
+      const history = messages
+        .filter(msg => !msg.errorDetails)
+        .map((msg) => ({
+          role: msg.role,
+          parts: [{ text: msg.content }],
+        }));
 
       let assistantContent = "";
       setMessages((prev) => [...prev, { role: "model", content: "" }]);
@@ -81,6 +90,13 @@ export default function App() {
     } catch (error: any) {
       console.error("Failed to send message:", error);
       let errorMessage = "O Chad encontrou um erro. Tente novamente.";
+      let technicalDetails = "";
+      
+      try {
+        technicalDetails = typeof error === 'object' ? JSON.stringify(error, null, 2) : String(error);
+      } catch (e) {
+        technicalDetails = String(error);
+      }
       
       const errorStr = error?.message?.toLowerCase() || "";
       
@@ -90,17 +106,26 @@ export default function App() {
         errorMessage = "Chave de API não encontrada ou inválida. Configure o GEMINI_API_KEY nos segredos (Settings > Secrets).";
       } else if (errorStr.includes("safety") || errorStr.includes("blocked")) {
         errorMessage = "O conteúdo foi bloqueado pelos filtros de segurança da IA.";
-      } else if (error?.message) {
-        errorMessage = `Erro do Chad: ${error.message}`;
+      } else if (errorStr.includes("quota") || errorStr.includes("429") || errorStr.includes("exhausted")) {
+        errorMessage = "Limite de uso excedido (Quota). Aguarde um minuto e tente novamente.";
+      } else if (errorStr.includes("not found") || errorStr.includes("404")) {
+        errorMessage = "Modelo da IA não encontrado ou indisponível no momento.";
+      } else {
+        errorMessage = "Falha ao entrar em contato com a Gemini API. Tente novamente em instantes.";
       }
         
       setMessages((prev) => {
         const newMessages = [...prev];
-        if (newMessages[newMessages.length - 1]?.role === "model" && !newMessages[newMessages.length - 1].content) {
-          newMessages[newMessages.length - 1].content = errorMessage;
+        const lastMsg = newMessages[newMessages.length - 1];
+        if (lastMsg?.role === "model" && !lastMsg.content) {
+          newMessages[newMessages.length - 1] = { 
+            role: "model", 
+            content: errorMessage,
+            errorDetails: technicalDetails
+          };
           return newMessages;
         }
-        return [...prev, { role: "model", content: errorMessage }];
+        return [...prev, { role: "model", content: errorMessage, errorDetails: technicalDetails }];
       });
     } finally {
       setIsLoading(false);
@@ -179,7 +204,13 @@ export default function App() {
             </motion.div>
           ) : (
             messages.map((msg, idx) => (
-              <ChatMessage key={idx} role={msg.role} content={msg.content} />
+              <ChatMessage 
+                key={idx} 
+                role={msg.role} 
+                content={msg.content} 
+                errorDetails={msg.errorDetails}
+                onRetry={idx === messages.length - 1 ? () => handleSend(messages[idx-1]?.content) : undefined}
+              />
             ))
           )}
         </AnimatePresence>
@@ -209,7 +240,7 @@ export default function App() {
               className="w-full bg-zinc-900/80 border border-zinc-800 text-zinc-100 px-6 py-4 pr-16 rounded-2xl focus:outline-none focus:ring-1 focus:ring-zinc-700 transition-all placeholder:text-zinc-600 text-sm backdrop-blur-sm"
             />
             <button
-              onClick={handleSend}
+              onClick={() => handleSend()}
               disabled={!input.trim() || isLoading}
               className="absolute right-2 p-2.5 bg-zinc-100 text-black rounded-xl hover:bg-white transition-all disabled:opacity-50 disabled:hover:bg-zinc-100"
             >
