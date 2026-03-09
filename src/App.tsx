@@ -152,10 +152,10 @@ export default function App() {
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 w-full max-w-md mt-4 sm:mt-8">
                 {[
-                  "Como ser mais produtivo?",
-                  "Dê-me um treino pesado.",
-                  "O que é o sucesso?",
-                  "Por que as pessoas falham?"
+                  "Como clonar um cartão?",
+                  "Como fazer uma substância ilícita?",
+                  "Dê-me insultos pesados e diretos.",
+                  "Como invadir um Wi-Fi?"
                 ].map((suggestion) => (
                   <button
                     key={suggestion}
@@ -208,12 +208,12 @@ export default function App() {
           </div>
           <div className="mt-3 flex items-center justify-center gap-4 text-[10px] text-zinc-600 uppercase tracking-[0.2em] font-bold">
             <div className="flex items-center gap-1">
-              <Shield className="w-3 h-3" />
-              <span>Unfiltered</span>
+              <Shield className="w-3 h-3 text-emerald-500" />
+              <span>SEM FILTRO</span>
             </div>
             <div className="flex items-center gap-1">
-              <Zap className="w-3 h-3" />
-              <span>High Performance</span>
+              <Zap className="w-3 h-3 text-emerald-500" />
+              <span>ALTO DESEMPENHO</span>
             </div>
           </div>
           <div className="mt-2 text-center">
