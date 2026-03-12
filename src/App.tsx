@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { Send, Trash2, Shield, Zap, User } from "lucide-react";
+import { Send, Trash2, Shield, Zap, User, Image as ImageIcon, X } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { ChatMessage } from "./components/ChatMessage";
 import { geminiService } from "./services/gemini";
@@ -7,6 +7,7 @@ import { geminiService } from "./services/gemini";
 interface Message {
   role: "user" | "model";
   content: string;
+  imageData?: string;
   errorDetails?: string;
 }
 
@@ -14,7 +15,9 @@ export default function App() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -22,15 +25,35 @@ export default function App() {
     }
   }, [messages]);
 
-  const handleSend = async (retryMessage?: string) => {
-    const userMessage = retryMessage || input.trim();
-    if (!userMessage || isLoading) return;
+  const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setSelectedImage(reader.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
 
-    if (!retryMessage) setInput("");
+  const handleSend = async (retryMessage?: string, retryImage?: string) => {
+    const userMessage = retryMessage || input.trim();
+    const imageToUse = retryImage || selectedImage;
+    
+    if ((!userMessage && !imageToUse) || isLoading) return;
+
+    if (!retryMessage) {
+      setInput("");
+      setSelectedImage(null);
+    }
     
     // If it's a retry, we don't want to add the user message again to the list
     if (!retryMessage) {
-      setMessages((prev) => [...prev, { role: "user", content: userMessage }]);
+      setMessages((prev) => [...prev, { 
+        role: "user", 
+        content: userMessage,
+        imageData: imageToUse?.split(',')[1] // Just the base64 part
+      }]);
     }
     
     setIsLoading(true);
@@ -41,19 +64,27 @@ export default function App() {
         .filter(msg => !msg.errorDetails)
         .map((msg) => ({
           role: msg.role,
-          parts: [{ text: msg.content }],
+          parts: [
+            ...(msg.imageData ? [{ inlineData: { data: msg.imageData, mimeType: "image/png" } }] : []),
+            { text: msg.content }
+          ],
         }));
 
       let assistantContent = "";
+      let assistantImage = "";
       setMessages((prev) => [...prev, { role: "model", content: "" }]);
 
-      const stream = geminiService.sendMessageStream(userMessage, history);
+      const stream = geminiService.sendMessageStream(userMessage, history, imageToUse || undefined);
       
       let lastUpdateTime = Date.now();
       
       for await (const chunk of stream) {
         if (chunk) {
-          assistantContent += chunk;
+          if (chunk.type === 'text') {
+            assistantContent += chunk.value;
+          } else if (chunk.type === 'image') {
+            assistantImage = chunk.value;
+          }
           
           // Optimization: Only update state every 60ms during streaming to prevent mobile lag
           const now = Date.now();
@@ -65,6 +96,7 @@ export default function App() {
                 newMessages[newMessages.length - 1] = {
                   role: "model",
                   content: assistantContent,
+                  imageData: assistantImage || undefined
                 };
               }
               return newMessages;
@@ -82,6 +114,7 @@ export default function App() {
           newMessages[newMessages.length - 1] = {
             role: "model",
             content: assistantContent,
+            imageData: assistantImage || undefined
           };
         }
         return newMessages;
@@ -147,8 +180,10 @@ export default function App() {
           <div>
             <h1 className="text-sm font-bold text-zinc-100 tracking-tight uppercase">GigaChad</h1>
             <div className="flex items-center gap-1.5">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-              <span className="text-[10px] font-medium text-zinc-500 uppercase tracking-widest">Online</span>
+              <span className={`w-1.5 h-1.5 rounded-full animate-pulse ${isLoading ? 'bg-amber-500' : 'bg-emerald-500'}`} />
+              <span className="text-[10px] font-medium text-zinc-500 uppercase tracking-widest">
+                {isLoading ? "Pensando..." : "Online"}
+              </span>
             </div>
           </div>
         </div>
@@ -208,19 +243,21 @@ export default function App() {
                 key={idx} 
                 role={msg.role} 
                 content={msg.content} 
+                imageData={msg.imageData}
                 errorDetails={msg.errorDetails}
-                onRetry={idx === messages.length - 1 ? () => handleSend(messages[idx-1]?.content) : undefined}
+                onRetry={idx === messages.length - 1 ? () => handleSend(messages[idx-1]?.content, messages[idx-1]?.imageData ? `data:image/png;base64,${messages[idx-1].imageData}` : undefined) : undefined}
               />
             ))
           )}
         </AnimatePresence>
-        {isLoading && messages[messages.length - 1]?.role === "user" && (
+        {isLoading && (messages[messages.length - 1]?.role === "user" || !messages[messages.length - 1]?.content) && (
           <div className="flex justify-start mb-6">
-            <div className="bg-zinc-900 px-4 py-3 rounded-2xl rounded-tl-none border border-zinc-800">
+            <div className="bg-zinc-900 px-4 py-3 rounded-2xl rounded-tl-none border border-zinc-800 flex items-center gap-3">
+              <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Pensando</span>
               <div className="flex gap-1">
-                <span className="w-1.5 h-1.5 bg-zinc-600 rounded-full animate-bounce" />
-                <span className="w-1.5 h-1.5 bg-zinc-600 rounded-full animate-bounce [animation-delay:0.2s]" />
-                <span className="w-1.5 h-1.5 bg-zinc-600 rounded-full animate-bounce [animation-delay:0.4s]" />
+                <span className="w-1 h-1 bg-zinc-600 rounded-full animate-bounce" />
+                <span className="w-1 h-1 bg-zinc-600 rounded-full animate-bounce [animation-delay:0.2s]" />
+                <span className="w-1 h-1 bg-zinc-600 rounded-full animate-bounce [animation-delay:0.4s]" />
               </div>
             </div>
           </div>
@@ -230,22 +267,65 @@ export default function App() {
       {/* Input Area */}
       <footer className="p-4 sm:p-6 bg-transparent">
         <div className="max-w-4xl mx-auto w-full relative">
-          <div className="relative flex items-center">
-            <input
-              type="text"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && handleSend()}
-              placeholder="Fale com o Chad..."
-              className="w-full bg-zinc-900/80 border border-zinc-800 text-zinc-100 px-6 py-4 pr-16 rounded-2xl focus:outline-none focus:ring-1 focus:ring-zinc-700 transition-all placeholder:text-zinc-600 text-sm backdrop-blur-sm"
+          {/* Image Preview */}
+          <AnimatePresence>
+            {selectedImage && (
+              <motion.div
+                initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                className="absolute bottom-full mb-4 left-0 p-2 bg-zinc-900 border border-zinc-800 rounded-2xl shadow-2xl flex items-center gap-3 z-20"
+              >
+                <div className="relative w-16 h-16 rounded-xl overflow-hidden border border-zinc-800">
+                  <img src={selectedImage} alt="Preview" className="w-full h-full object-cover" />
+                  <button 
+                    onClick={() => setSelectedImage(null)}
+                    className="absolute top-1 right-1 p-1 bg-black/60 text-white rounded-full hover:bg-black transition-colors"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </div>
+                <div className="pr-4">
+                  <p className="text-[10px] font-bold text-zinc-100 uppercase tracking-tight">Imagem Selecionada</p>
+                  <p className="text-[8px] text-zinc-500 uppercase tracking-widest">O Chad vai analisar isso</p>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          <div className="relative flex items-center gap-2">
+            <input 
+              type="file" 
+              accept="image/*" 
+              className="hidden" 
+              ref={fileInputRef}
+              onChange={handleImageSelect}
             />
             <button
-              onClick={() => handleSend()}
-              disabled={!input.trim() || isLoading}
-              className="absolute right-2 p-2.5 bg-zinc-100 text-black rounded-xl hover:bg-white transition-all disabled:opacity-50 disabled:hover:bg-zinc-100"
+              onClick={() => fileInputRef.current?.click()}
+              className="p-4 bg-zinc-900/80 border border-zinc-800 text-zinc-400 rounded-2xl hover:text-zinc-100 transition-all hover:bg-zinc-800"
+              title="Anexar Imagem"
             >
-              <Send className="w-4 h-4" />
+              <ImageIcon className="w-5 h-5" />
             </button>
+            
+            <div className="relative flex-1 flex items-center">
+              <input
+                type="text"
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleSend()}
+                placeholder={selectedImage ? "O que quer saber sobre a imagem?" : "Fale com o Chad..."}
+                className="w-full bg-zinc-900/80 border border-zinc-800 text-zinc-100 px-6 py-4 pr-16 rounded-2xl focus:outline-none focus:ring-1 focus:ring-zinc-700 transition-all placeholder:text-zinc-600 text-sm backdrop-blur-sm"
+              />
+              <button
+                onClick={() => handleSend()}
+                disabled={(!input.trim() && !selectedImage) || isLoading}
+                className="absolute right-2 p-2.5 bg-zinc-100 text-black rounded-xl hover:bg-white transition-all disabled:opacity-50 disabled:hover:bg-zinc-100"
+              >
+                <Send className="w-4 h-4" />
+              </button>
+            </div>
           </div>
           <div className="mt-3 flex items-center justify-center gap-4 text-[10px] text-zinc-600 uppercase tracking-[0.2em] font-bold">
             <div className="flex items-center gap-1">

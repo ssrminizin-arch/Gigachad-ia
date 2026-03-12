@@ -7,11 +7,12 @@ import { AlertCircle, ChevronDown, ChevronUp, RefreshCcw } from "lucide-react";
 interface ChatMessageProps {
   role: "user" | "model";
   content: string;
+  imageData?: string;
   errorDetails?: string;
   onRetry?: () => void;
 }
 
-export const ChatMessage = ({ role, content, errorDetails, onRetry }: ChatMessageProps) => {
+export const ChatMessage = ({ role, content, imageData, errorDetails, onRetry }: ChatMessageProps) => {
   const [showError, setShowError] = useState(false);
   const isUser = role === "user";
   const hasError = !!errorDetails;
@@ -51,7 +52,19 @@ export const ChatMessage = ({ role, content, errorDetails, onRetry }: ChatMessag
             </span>
           )}
         </div>
-        <div className="markdown-body">
+        
+        {imageData && (
+          <div className="mb-4 rounded-xl overflow-hidden border border-zinc-800 bg-black/20">
+            <img 
+              src={`data:image/png;base64,${imageData}`} 
+              alt={isUser ? "Imagem enviada" : "Geração do Chad"} 
+              className="w-full h-auto object-cover"
+              referrerPolicy="no-referrer"
+            />
+          </div>
+        )}
+
+        <div className="markdown-body space-y-1">
           <ReactMarkdown>{content}</ReactMarkdown>
         </div>
 
