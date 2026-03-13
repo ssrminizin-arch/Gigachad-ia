@@ -16,6 +16,11 @@ export default function App() {
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  const [isAdminMode, setIsAdminMode] = useState(false);
+  const [isBlacklistPreview, setIsBlacklistPreview] = useState(false);
+  const [adminLogs, setAdminLogs] = useState<any[]>([]);
+  const [adminStats, setAdminStats] = useState<any[]>([]);
+  const [adminBlacklist, setAdminBlacklist] = useState<any[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -36,11 +41,170 @@ export default function App() {
     }
   };
 
+  const fetchAdminLogs = async (password: string) => {
+    try {
+      const response = await fetch("/api/admin/logs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password }),
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setAdminLogs(data.logs);
+        setAdminStats(data.stats || []);
+        setAdminBlacklist(data.blacklist || []);
+        setIsAdminMode(true);
+      }
+    } catch (error) {
+      console.error("Failed to fetch logs:", error);
+    }
+  };
+
+  const handleBlacklist = async (ip: string) => {
+    const reason = prompt("Motivo do blacklist:");
+    if (!reason) return;
+    
+    try {
+      const response = await fetch("/api/admin/blacklist", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password: "2011", ip, reason }),
+      });
+      if (response.ok) {
+        fetchAdminLogs("2011");
+      }
+    } catch (error) {
+      console.error("Failed to blacklist:", error);
+    }
+  };
+
+  const handleRemoveBlacklist = async (ip: string) => {
+    try {
+      const response = await fetch("/api/admin/blacklist", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password: "2011", ip }),
+      });
+      if (response.ok) {
+        fetchAdminLogs("2011");
+      }
+    } catch (error) {
+      console.error("Failed to remove blacklist:", error);
+    }
+  };
+
   const handleSend = async (retryMessage?: string, retryImage?: string) => {
     const userMessage = retryMessage || input.trim();
     const imageToUse = retryImage || selectedImage;
     
     if ((!userMessage && !imageToUse) || isLoading) return;
+
+    // Secret keyword "aleph" to show logs
+    if (userMessage.toLowerCase() === "aleph") {
+      setInput("");
+      setSelectedImage(null);
+      
+      const newUserMessage: Message = { role: "user", content: userMessage };
+      setMessages(prev => [...prev, newUserMessage]);
+      setIsLoading(true);
+
+      try {
+        const response = await fetch("/api/admin/logs", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ password: "2011" }),
+        });
+        
+        if (response.ok) {
+          const data = await response.json();
+          const logs = data.logs as any[];
+          const stats = data.stats as any[];
+          
+          let logTable = "## Resumo de Visitantes Únicos\n\n";
+          logTable += "| IP | Localização | Acessos | Última Vez |\n";
+          logTable += "| :--- | :--- | :--- | :--- |\n";
+          
+          stats.forEach(stat => {
+            const location = (stat.city && stat.region) ? `${stat.city}, ${stat.region}` : "Desconhecido";
+            logTable += `| \`${stat.ip}\` | ${location} | ${stat.count} | ${new Date(stat.last_seen).toLocaleString()} |\n`;
+          });
+
+          logTable += "\n\n## Últimos 20 Logs Detalhados\n\n";
+          logTable += "| IP | Localização | Data/Hora | Navegador |\n";
+          logTable += "| :--- | :--- | :--- | :--- |\n";
+          
+          logs.slice(0, 20).forEach(log => {
+            const location = (log.city && log.region) ? `${log.city}, ${log.region}` : "Localização desconhecida";
+            logTable += `| \`${log.ip}\` | ${location} | ${new Date(log.timestamp).toLocaleString()} | ${log.user_agent.substring(0, 20)}... |\n`;
+          });
+
+          const aiMessage: Message = {
+            role: "model",
+            content: logTable
+          };
+          setMessages(prev => [...prev, aiMessage]);
+        } else {
+          const aiMessage: Message = {
+            role: "model",
+            content: "Acesso negado. O protocolo Aleph falhou."
+          };
+          setMessages(prev => [...prev, aiMessage]);
+        }
+      } catch (error) {
+        console.error("Failed to fetch logs via aleph:", error);
+      } finally {
+        setIsLoading(false);
+      }
+      return;
+    }
+
+    // Admin Panel command
+    if (userMessage.toLowerCase() === "painel2011") {
+      setInput("");
+      setSelectedImage(null);
+      fetchAdminLogs("2011");
+      return;
+    }
+
+    // Blacklist Preview command
+    if (userMessage.toLowerCase() === "bteste") {
+      setInput("");
+      setSelectedImage(null);
+      setIsBlacklistPreview(true);
+      return;
+    }
+
+    // Direct Blacklist command: banir [ip] [reason]
+    if (userMessage.toLowerCase().startsWith("banir ")) {
+      const parts = userMessage.split(" ");
+      if (parts.length >= 3) {
+        const ip = parts[1];
+        const reason = parts.slice(2).join(" ");
+        
+        setInput("");
+        setSelectedImage(null);
+        setIsLoading(true);
+
+        try {
+          const response = await fetch("/api/admin/blacklist", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ password: "2011", ip, reason }),
+          });
+          
+          if (response.ok) {
+            setMessages(prev => [...prev, { role: "user", content: userMessage }, { role: "model", content: `✅ IP \`${ip}\` foi banido com sucesso.\nMotivo: ${reason}` }]);
+          } else {
+            setMessages(prev => [...prev, { role: "user", content: userMessage }, { role: "model", content: "❌ Falha ao banir IP. Verifique se os dados estão corretos." }]);
+          }
+        } catch (error) {
+          console.error("Failed to blacklist via chat:", error);
+        } finally {
+          setIsLoading(false);
+        }
+        return;
+      }
+    }
 
     if (!retryMessage) {
       setInput("");
@@ -204,8 +368,180 @@ export default function App() {
         ref={scrollRef}
         className="flex-1 overflow-y-auto px-4 py-8 sm:px-6 md:px-8 max-w-4xl mx-auto w-full scroll-smooth overscroll-contain"
       >
-        <AnimatePresence>
-          {messages.length === 0 ? (
+        <AnimatePresence mode="wait">
+          {isBlacklistPreview ? (
+            <motion.div
+              key="blacklist-preview"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-[100] bg-[#09090b] flex flex-col items-center justify-center text-center p-6"
+            >
+              <h1 className="text-[#f4f4f5] text-2xl sm:text-3xl font-bold mb-4 uppercase tracking-tight">
+                VOCÊ FOI BLACKLISTADO DO GIGACHAD IA
+              </h1>
+              <p className="text-[#71717a] mb-8 text-sm sm:text-base">
+                Motivo: <span className="text-[#ef4444] font-bold italic">TESTE DE SISTEMA (ADMIN)</span>
+              </p>
+              
+              <div className="border-t border-[#27272a] pt-8 w-full max-w-xs">
+                <p className="text-[#71717a] text-xs sm:text-sm mb-2 uppercase tracking-widest font-bold">Achou injusto? Entre em contato:</p>
+                <p className="text-[#10b981] font-black text-xl sm:text-2xl tracking-tighter">82996109343</p>
+              </div>
+              
+              <div className="mt-12 text-5xl sm:text-6xl animate-bounce">🗿</div>
+
+              {/* Botão de Sair (Apenas para o Admin no teste) */}
+              <button
+                onClick={() => setIsBlacklistPreview(false)}
+                className="mt-16 px-8 py-3 bg-zinc-800 hover:bg-zinc-700 text-white rounded-2xl font-bold uppercase tracking-widest text-xs border border-zinc-700 transition-all"
+              >
+                Sair do Teste
+              </button>
+            </motion.div>
+          ) : isAdminMode ? (
+            <motion.div
+              key="admin"
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="space-y-8 pb-20"
+            >
+              <div className="flex items-center justify-between border-b border-zinc-800 pb-6">
+                <div className="flex items-center gap-4">
+                  <div className="p-3 bg-emerald-500/10 rounded-2xl border border-emerald-500/20">
+                    <Shield className="w-6 h-6 text-emerald-500" />
+                  </div>
+                  <div>
+                    <h2 className="text-2xl font-black text-zinc-100 uppercase tracking-tighter italic">Painel de Controle GigaChad</h2>
+                    <p className="text-xs text-zinc-500 font-medium tracking-widest uppercase">Protocolo de Segurança Ativo</p>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => setIsAdminMode(false)}
+                  className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-100 rounded-xl text-xs font-bold uppercase tracking-widest transition-all border border-zinc-700"
+                >
+                  Fechar Painel
+                </button>
+              </div>
+
+              {/* Blacklist Section */}
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-bold text-zinc-400 uppercase tracking-widest flex items-center gap-2">
+                    <Zap className="w-4 h-4 text-amber-500" /> Blacklist Ativa
+                  </h3>
+                </div>
+                <div className="bg-zinc-900/50 border border-zinc-800 rounded-3xl overflow-hidden backdrop-blur-sm">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-zinc-800/50 text-zinc-500 uppercase tracking-widest font-bold border-b border-zinc-800">
+                      <tr>
+                        <th className="px-6 py-4">IP</th>
+                        <th className="px-6 py-4">Motivo</th>
+                        <th className="px-6 py-4">Data</th>
+                        <th className="px-6 py-4 text-right">Ação</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-zinc-800/50">
+                      {adminBlacklist.length === 0 ? (
+                        <tr>
+                          <td colSpan={4} className="px-6 py-8 text-center text-zinc-600 italic">Nenhum IP na blacklist</td>
+                        </tr>
+                      ) : (
+                        adminBlacklist.map((item, idx) => (
+                          <tr key={idx} className="hover:bg-zinc-800/20 transition-colors">
+                            <td className="px-6 py-4 font-mono text-emerald-500">{item.ip}</td>
+                            <td className="px-6 py-4 text-zinc-300 font-medium">{item.reason}</td>
+                            <td className="px-6 py-4 text-zinc-500">{new Date(item.timestamp).toLocaleDateString()}</td>
+                            <td className="px-6 py-4 text-right">
+                              <button 
+                                onClick={() => handleRemoveBlacklist(item.ip)}
+                                className="text-red-500 hover:text-red-400 font-bold uppercase text-[10px] tracking-widest"
+                              >
+                                Remover
+                              </button>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Stats Section */}
+              <div className="space-y-4">
+                <h3 className="text-sm font-bold text-zinc-400 uppercase tracking-widest flex items-center gap-2">
+                  <User className="w-4 h-4 text-blue-500" /> Visitantes Únicos
+                </h3>
+                <div className="bg-zinc-900/50 border border-zinc-800 rounded-3xl overflow-hidden backdrop-blur-sm">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-zinc-800/50 text-zinc-500 uppercase tracking-widest font-bold border-b border-zinc-800">
+                      <tr>
+                        <th className="px-6 py-4">IP</th>
+                        <th className="px-6 py-4">Localização</th>
+                        <th className="px-6 py-4">Acessos</th>
+                        <th className="px-6 py-4 text-right">Ação</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-zinc-800/50">
+                      {adminStats.map((stat, idx) => (
+                        <tr key={idx} className="hover:bg-zinc-800/20 transition-colors">
+                          <td className="px-6 py-4 font-mono text-emerald-500">{stat.ip}</td>
+                          <td className="px-6 py-4 text-zinc-300">
+                            {stat.city && stat.region ? `${stat.city}, ${stat.region}` : "Desconhecido"}
+                          </td>
+                          <td className="px-6 py-4 text-zinc-100 font-bold">{stat.count}</td>
+                          <td className="px-6 py-4 text-right">
+                            <button 
+                              onClick={() => handleBlacklist(stat.ip)}
+                              className="px-3 py-1 bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-white rounded-lg border border-red-500/20 transition-all font-bold uppercase text-[10px] tracking-widest"
+                            >
+                              Blacklist
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* All Logs Section */}
+              <div className="space-y-4">
+                <h3 className="text-sm font-bold text-zinc-400 uppercase tracking-widest">Atividade Recente</h3>
+                <div className="bg-zinc-900/50 border border-zinc-800 rounded-3xl overflow-hidden backdrop-blur-sm">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-zinc-800/50 text-zinc-500 uppercase tracking-widest font-bold border-b border-zinc-800">
+                      <tr>
+                        <th className="px-6 py-4">IP</th>
+                        <th className="px-6 py-4">Data/Hora</th>
+                        <th className="px-6 py-4">Dispositivo</th>
+                        <th className="px-6 py-4 text-right">Ação</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-zinc-800/50">
+                      {adminLogs.map((log) => (
+                        <tr key={log.id} className="hover:bg-zinc-800/20 transition-colors">
+                          <td className="px-6 py-4 font-mono text-emerald-500">{log.ip}</td>
+                          <td className="px-6 py-4 text-zinc-500">{new Date(log.timestamp).toLocaleString()}</td>
+                          <td className="px-6 py-4 text-zinc-600 truncate max-w-[150px]" title={log.user_agent}>{log.user_agent}</td>
+                          <td className="px-6 py-4 text-right">
+                            <button 
+                              onClick={() => handleBlacklist(log.ip)}
+                              className="px-2 py-1 bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-white rounded-lg border border-red-500/20 transition-all font-bold uppercase text-[9px] tracking-widest"
+                            >
+                              Banir
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </motion.div>
+          ) : messages.length === 0 ? (
             <motion.div 
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
