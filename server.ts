@@ -34,9 +34,17 @@ try {
   // Columns likely already exist
 }
 
+// Simple Geolocation Cache to avoid rate limits
+const geoCache = new Map<string, { city: string, region: string }>();
+
 async function getGeoLocation(ip: string) {
   // Clean IP (remove IPv6 prefix if present)
   const cleanIp = ip.replace(/^::ffff:/, "");
+
+  // Check cache first
+  if (geoCache.has(cleanIp)) {
+    return geoCache.get(cleanIp)!;
+  }
 
   // Handle local IPs
   if (
@@ -44,10 +52,12 @@ async function getGeoLocation(ip: string) {
     cleanIp === "127.0.0.1" || 
     cleanIp.startsWith("192.168.") || 
     cleanIp.startsWith("10.") ||
-    cleanIp.startsWith("172.16.") || // Added more private ranges
+    cleanIp.startsWith("172.16.") ||
     cleanIp === "localhost"
   ) {
-    return { city: "Localhost", region: "Rede Local" };
+    const local = { city: "Localhost", region: "Rede Local" };
+    geoCache.set(cleanIp, local);
+    return local;
   }
 
   try {
@@ -55,10 +65,12 @@ async function getGeoLocation(ip: string) {
     if (response.ok) {
       const data = await response.json();
       if (data.status === "success") {
-        return {
+        const geo = {
           city: data.city || "Unknown",
           region: data.regionName || "Unknown"
         };
+        geoCache.set(cleanIp, geo);
+        return geo;
       }
     }
   } catch (err) {
@@ -126,18 +138,23 @@ async function startServer() {
       `);
     }
 
-    // Skip logging for internal vite requests
-    if (req.path.startsWith('/api') || req.path === '/' || req.path.endsWith('.html')) {
+    // Log almost everything except static assets to capture all accesses
+    const isAsset = req.path.match(/\.(png|jpg|jpeg|gif|svg|css|js|ico|woff|woff2|ttf|eot)$/i);
+    const isInternal = req.path.startsWith('/@vite') || req.path.startsWith('/node_modules');
+
+    if (!isAsset && !isInternal) {
       const userAgent = req.headers['user-agent'];
       
       // Don't block the request for geolocation
       getGeoLocation(cleanIp).then(geo => {
         try {
           const stmt = db.prepare("INSERT INTO access_logs (ip, city, region, user_agent) VALUES (?, ?, ?, ?)");
-          stmt.run(cleanIp, geo.city, geo.region, userAgent);
+          stmt.run(cleanIp, geo.city, geo.region, userAgent || "Unknown");
         } catch (err) {
           console.error("Failed to log access:", err);
         }
+      }).catch(err => {
+        console.error("GeoLocation error:", err);
       });
     }
     next();
@@ -150,12 +167,16 @@ async function startServer() {
 
   app.post("/api/admin/logs", (req, res) => {
     const { password } = req.body;
+    
+    // Debug log (internal)
+    console.log(`Admin access attempt with password: ${password ? '****' : 'none'}`);
+
     if (password !== "2011") {
       return res.status(401).json({ error: "Unauthorized" });
     }
 
     try {
-      const logs = db.prepare("SELECT * FROM access_logs ORDER BY timestamp DESC LIMIT 100").all();
+      const logs = db.prepare("SELECT * FROM access_logs ORDER BY timestamp DESC LIMIT 200").all();
       const stats = db.prepare(`
         SELECT 
           ip, city, region, 
@@ -164,12 +185,13 @@ async function startServer() {
         FROM access_logs 
         GROUP BY ip 
         ORDER BY last_seen DESC 
-        LIMIT 50
+        LIMIT 500
       `).all();
       const blacklist = db.prepare("SELECT * FROM blacklist ORDER BY timestamp DESC").all();
       res.json({ logs, stats, blacklist });
     } catch (err) {
-      res.status(500).json({ error: "Failed to fetch logs" });
+      console.error("Database error in /api/admin/logs:", err);
+      res.status(500).json({ error: "Failed to fetch logs from database" });
     }
   });
 

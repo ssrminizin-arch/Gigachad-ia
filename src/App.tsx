@@ -120,7 +120,9 @@ export default function App() {
           const logs = data.logs as any[];
           const stats = data.stats as any[];
           
-          let logTable = "## Resumo de Visitantes Únicos\n\n";
+          let logTable = "## PROTOCOLO ALEPH: REGISTRO DE VISITANTES ÚNICOS 🗿\n\n";
+          logTable += "Abaixo estão todos os indivíduos únicos que acessaram o sistema. Sem repetições, apenas a elite.\n\n";
+          
           logTable += "| IP | Localização | Acessos | Última Vez |\n";
           logTable += "| :--- | :--- | :--- | :--- |\n";
           
@@ -129,29 +131,31 @@ export default function App() {
             logTable += `| \`${stat.ip}\` | ${location} | ${stat.count} | ${new Date(stat.last_seen).toLocaleString()} |\n`;
           });
 
-          logTable += "\n\n## Últimos 20 Logs Detalhados\n\n";
-          logTable += "| IP | Localização | Data/Hora | Navegador |\n";
-          logTable += "| :--- | :--- | :--- | :--- |\n";
-          
-          logs.slice(0, 20).forEach(log => {
-            const location = (log.city && log.region) ? `${log.city}, ${log.region}` : "Localização desconhecida";
-            logTable += `| \`${log.ip}\` | ${location} | ${new Date(log.timestamp).toLocaleString()} | ${log.user_agent.substring(0, 20)}... |\n`;
-          });
-
           const aiMessage: Message = {
             role: "model",
             content: logTable
           };
           setMessages(prev => [...prev, aiMessage]);
         } else {
+          const status = response.status;
+          let errorMsg = "Acesso negado. O protocolo Aleph falhou.";
+          
+          if (status === 401) errorMsg = "Senha incorreta. Você não tem autoridade para o protocolo Aleph.";
+          if (status === 500) errorMsg = "Erro interno no banco de dados. O protocolo Aleph está instável.";
+
           const aiMessage: Message = {
             role: "model",
-            content: "Acesso negado. O protocolo Aleph falhou."
+            content: `## ERRO NO PROTOCOLO ALEPH ⚠️\n\n${errorMsg}\n\nStatus: ${status}`
           };
           setMessages(prev => [...prev, aiMessage]);
         }
       } catch (error) {
         console.error("Failed to fetch logs via aleph:", error);
+        const aiMessage: Message = {
+          role: "model",
+          content: "## FALHA CRÍTICA NO PROTOCOLO ALEPH 🚨\n\nNão consegui estabelecer conexão com o servidor de logs. Verifique se o backend está rodando."
+        };
+        setMessages(prev => [...prev, aiMessage]);
       } finally {
         setIsLoading(false);
       }
