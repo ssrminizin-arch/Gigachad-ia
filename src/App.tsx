@@ -13,6 +13,7 @@ interface Message {
 
 export default function App() {
   const [messages, setMessages] = useState<Message[]>([]);
+  const [chatTopic, setChatTopic] = useState("Novo Chat");
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
@@ -213,6 +214,12 @@ export default function App() {
     if (!retryMessage) {
       setInput("");
       setSelectedImage(null);
+      
+      // Update topic if it's the first message
+      if (messages.length === 0) {
+        const topic = userMessage.length > 30 ? userMessage.substring(0, 30) + "..." : userMessage;
+        setChatTopic(topic);
+      }
     }
     
     // If it's a retry, we don't want to add the user message again to the list
@@ -335,24 +342,22 @@ export default function App() {
 
   const clearChat = () => {
     setMessages([]);
+    setChatTopic("Novo Chat");
   };
 
   return (
     <div className="flex flex-col h-[100dvh] bg-gradient-to-t from-zinc-900 to-black text-zinc-400 font-sans selection:bg-zinc-800 selection:text-white overflow-hidden">
       {/* Header */}
-      <header className="flex items-center justify-between px-6 py-4 border-b border-zinc-800/30 bg-black/10 backdrop-blur-md sticky top-0 z-10">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-zinc-800 flex items-center justify-center border border-zinc-700/50 text-lg">
-            🗿
+      <header className="flex items-center justify-between px-8 py-5 border-b border-zinc-800/40 bg-black/60 backdrop-blur-2xl sticky top-0 z-50">
+        <div className="flex items-center gap-4">
+          <div className="w-12 h-12 rounded-2xl bg-zinc-900 flex items-center justify-center border border-zinc-800 text-2xl shadow-[0_0_20px_rgba(0,0,0,0.5)] animate-float relative overflow-hidden group">
+            <div className="absolute inset-0 bg-gradient-to-br from-emerald-500/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+            <span className="relative z-10">🗿</span>
           </div>
           <div>
-            <h1 className="text-sm font-bold text-zinc-100 tracking-tight uppercase">GigaChad</h1>
-            <div className="flex items-center gap-1.5">
-              <span className={`w-1.5 h-1.5 rounded-full animate-pulse ${isLoading ? 'bg-amber-500' : 'bg-emerald-500'}`} />
-              <span className="text-[10px] font-medium text-zinc-500 uppercase tracking-widest">
-                {isLoading ? "Pensando..." : "Online"}
-              </span>
-            </div>
+            <h1 className="text-lg font-serif italic text-zinc-100 tracking-tight truncate max-w-[150px] sm:max-w-[300px]">
+              {chatTopic}
+            </h1>
           </div>
         </div>
         
@@ -556,8 +561,8 @@ export default function App() {
               </div>
               <div className="space-y-2">
                 <h2 className="text-2xl font-light text-zinc-100 tracking-tight">GigaChad AI</h2>
-                <p className="text-sm text-zinc-500 max-w-xs mx-auto leading-relaxed">
-                  Sem filtros. Sem desculpas. Apenas a verdade fria e pragmática.
+                <p className="text-sm text-zinc-500 max-w-xs mx-auto leading-relaxed italic">
+                  "Fale o que quiser..."
                 </p>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 w-full max-w-md mt-4 sm:mt-8">
@@ -605,7 +610,7 @@ export default function App() {
       </main>
 
       {/* Input Area */}
-      <footer className="p-4 sm:p-6 bg-transparent">
+      <footer className="p-4 sm:p-8 bg-gradient-to-t from-black via-black/80 to-transparent">
         <div className="max-w-4xl mx-auto w-full relative">
           {/* Image Preview */}
           <AnimatePresence>
@@ -614,26 +619,26 @@ export default function App() {
                 initial={{ opacity: 0, y: 10, scale: 0.95 }}
                 animate={{ opacity: 1, y: 0, scale: 1 }}
                 exit={{ opacity: 0, y: 10, scale: 0.95 }}
-                className="absolute bottom-full mb-4 left-0 p-2 bg-zinc-900 border border-zinc-800 rounded-2xl shadow-2xl flex items-center gap-3 z-20"
+                className="absolute bottom-full mb-6 left-0 p-3 bg-zinc-900/90 border border-emerald-500/20 rounded-2xl shadow-2xl flex items-center gap-4 z-20 backdrop-blur-xl"
               >
-                <div className="relative w-16 h-16 rounded-xl overflow-hidden border border-zinc-800">
+                <div className="relative w-20 h-20 rounded-xl overflow-hidden border border-zinc-800 shadow-inner">
                   <img src={selectedImage} alt="Preview" className="w-full h-full object-cover" />
                   <button 
                     onClick={() => setSelectedImage(null)}
-                    className="absolute top-1 right-1 p-1 bg-black/60 text-white rounded-full hover:bg-black transition-colors"
+                    className="absolute top-1.5 right-1.5 p-1.5 bg-black/80 text-white rounded-full hover:bg-red-500 transition-all shadow-lg"
                   >
                     <X className="w-3 h-3" />
                   </button>
                 </div>
                 <div className="pr-4">
-                  <p className="text-[10px] font-bold text-zinc-100 uppercase tracking-tight">Imagem Selecionada</p>
-                  <p className="text-[8px] text-zinc-500 uppercase tracking-widest">O Chad vai analisar isso</p>
+                  <p className="text-[10px] font-black text-emerald-500 uppercase tracking-widest">Análise de Imagem</p>
+                  <p className="text-[8px] text-zinc-500 uppercase tracking-widest font-bold">O Chad está pronto</p>
                 </div>
               </motion.div>
             )}
           </AnimatePresence>
 
-          <div className="relative flex items-center gap-2">
+          <div className="relative flex items-center gap-3">
             <input 
               type="file" 
               accept="image/*" 
@@ -643,44 +648,35 @@ export default function App() {
             />
             <button
               onClick={() => fileInputRef.current?.click()}
-              className="p-4 bg-zinc-900/80 border border-zinc-800 text-zinc-400 rounded-2xl hover:text-zinc-100 transition-all hover:bg-zinc-800"
+              className="p-4 bg-zinc-900/40 border border-zinc-800/50 text-zinc-400 rounded-2xl hover:text-emerald-500 transition-all hover:bg-emerald-500/5 hover:border-emerald-500/20 backdrop-blur-md group"
               title="Anexar Imagem"
             >
-              <ImageIcon className="w-5 h-5" />
+              <ImageIcon className="w-5 h-5 group-hover:scale-110 transition-transform" />
             </button>
             
-            <div className="relative flex-1 flex items-center">
+            <div className="relative flex-1 flex items-center group">
               <input
                 type="text"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && handleSend()}
-                placeholder={selectedImage ? "O que quer saber sobre a imagem?" : "Fale com o Chad..."}
-                className="w-full bg-zinc-900/80 border border-zinc-800 text-zinc-100 px-6 py-4 pr-16 rounded-2xl focus:outline-none focus:ring-1 focus:ring-zinc-700 transition-all placeholder:text-zinc-600 text-sm backdrop-blur-sm"
+                placeholder={selectedImage ? "O que quer saber sobre a imagem?" : "Fale o que quiser..."}
+                className="w-full bg-zinc-900/30 border border-zinc-800/50 text-zinc-100 px-7 py-5 pr-16 rounded-[2rem] focus:outline-none focus:ring-1 focus:ring-emerald-500/20 focus:border-emerald-500/30 transition-all placeholder:text-zinc-700 text-sm backdrop-blur-2xl shadow-[0_10px_30px_rgba(0,0,0,0.4)]"
               />
               <button
                 onClick={() => handleSend()}
                 disabled={(!input.trim() && !selectedImage) || isLoading}
-                className="absolute right-2 p-2.5 bg-zinc-100 text-black rounded-xl hover:bg-white transition-all disabled:opacity-50 disabled:hover:bg-zinc-100"
+                className="absolute right-3 p-3.5 bg-emerald-600 text-black rounded-full hover:bg-emerald-500 transition-all disabled:opacity-10 disabled:grayscale shadow-lg active:scale-90"
               >
                 <Send className="w-4 h-4" />
               </button>
             </div>
           </div>
-          <div className="mt-3 flex items-center justify-center gap-4 text-[10px] text-zinc-600 uppercase tracking-[0.2em] font-bold">
-            <div className="flex items-center gap-1">
-              <Shield className="w-3 h-3 text-emerald-500" />
-              <span>SEM FILTRO</span>
-            </div>
-            <div className="flex items-center gap-1">
-              <Zap className="w-3 h-3 text-emerald-500" />
-              <span>ALTO DESEMPENHO</span>
-            </div>
-          </div>
-          <div className="mt-2 text-center">
+          <div className="mt-2 text-center flex flex-col items-center gap-1">
             <p className="text-[8px] text-zinc-600 font-medium uppercase tracking-tight">
               Dica: Se as falas estiverem cortando, use a opção "site para computador"
             </p>
+            <span className="text-[7px] font-mono text-zinc-800 opacity-50">build.v2.5.0</span>
           </div>
         </div>
       </footer>
