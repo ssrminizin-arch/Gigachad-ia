@@ -165,60 +165,65 @@ async function startServer() {
     res.json({ status: "ok", message: "GigaChad Server is running" });
   });
 
-  app.post("/api/admin/logs", (req, res) => {
-    const { password } = req.body;
-    
-    // Debug log (internal)
-    console.log(`Admin access attempt with password: ${password ? '****' : 'none'}`);
+  // Admin Logs Route
+  app.route(["/api/admin/logs", "/api/admin/logs/"])
+    .post((req, res) => {
+      const { password } = req.body;
+      
+      if (password !== "2011") {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
 
-    if (password !== "2011") {
-      return res.status(401).json({ error: "Unauthorized" });
-    }
-
-    try {
-      const logs = db.prepare("SELECT * FROM access_logs ORDER BY timestamp DESC LIMIT 200").all();
-      const stats = db.prepare(`
-        SELECT 
-          ip, city, region, 
-          COUNT(*) as count, 
-          MAX(timestamp) as last_seen 
-        FROM access_logs 
-        GROUP BY ip 
-        ORDER BY last_seen DESC 
-        LIMIT 500
-      `).all();
-      const blacklist = db.prepare("SELECT * FROM blacklist ORDER BY timestamp DESC").all();
-      res.json({ logs, stats, blacklist });
-    } catch (err) {
-      console.error("Database error in /api/admin/logs:", err);
-      res.status(500).json({ error: "Failed to fetch logs from database" });
-    }
-  });
+      try {
+        const logs = db.prepare("SELECT * FROM access_logs ORDER BY timestamp DESC LIMIT 200").all();
+        const stats = db.prepare(`
+          SELECT 
+            ip, city, region, 
+            COUNT(*) as count, 
+            MAX(timestamp) as last_seen 
+          FROM access_logs 
+          GROUP BY ip 
+          ORDER BY last_seen DESC 
+          LIMIT 500
+        `).all();
+        const blacklist = db.prepare("SELECT * FROM blacklist ORDER BY timestamp DESC").all();
+        res.json({ logs, stats, blacklist });
+      } catch (err) {
+        console.error("Database error in /api/admin/logs:", err);
+        res.status(500).json({ error: "Failed to fetch logs from database" });
+      }
+    })
+    .all((req, res) => {
+      res.status(405).json({ error: `Method ${req.method} not allowed. Use POST.` });
+    });
 
   // Blacklist Management Endpoints
-  app.post("/api/admin/blacklist", (req, res) => {
-    const { password, ip, reason } = req.body;
-    if (password !== "2011") return res.status(401).json({ error: "Unauthorized" });
+  app.route(["/api/admin/blacklist", "/api/admin/blacklist/"])
+    .post((req, res) => {
+      const { password, ip, reason } = req.body;
+      if (password !== "2011") return res.status(401).json({ error: "Unauthorized" });
 
-    try {
-      db.prepare("INSERT OR REPLACE INTO blacklist (ip, reason) VALUES (?, ?)").run(ip, reason);
-      res.json({ success: true });
-    } catch (err) {
-      res.status(500).json({ error: "Failed to blacklist IP" });
-    }
-  });
+      try {
+        db.prepare("INSERT OR REPLACE INTO blacklist (ip, reason) VALUES (?, ?)").run(ip, reason);
+        res.json({ success: true });
+      } catch (err) {
+        res.status(500).json({ error: "Failed to blacklist IP" });
+      }
+    })
+    .delete((req, res) => {
+      const { password, ip } = req.body;
+      if (password !== "2011") return res.status(401).json({ error: "Unauthorized" });
 
-  app.delete("/api/admin/blacklist", (req, res) => {
-    const { password, ip } = req.body;
-    if (password !== "2011") return res.status(401).json({ error: "Unauthorized" });
-
-    try {
-      db.prepare("DELETE FROM blacklist WHERE ip = ?").run(ip);
-      res.json({ success: true });
-    } catch (err) {
-      res.status(500).json({ error: "Failed to remove from blacklist" });
-    }
-  });
+      try {
+        db.prepare("DELETE FROM blacklist WHERE ip = ?").run(ip);
+        res.json({ success: true });
+      } catch (err) {
+        res.status(500).json({ error: "Failed to remove from blacklist" });
+      }
+    })
+    .all((req, res) => {
+      res.status(405).json({ error: `Method ${req.method} not allowed. Use POST or DELETE.` });
+    });
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
