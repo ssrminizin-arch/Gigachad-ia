@@ -308,7 +308,7 @@ export default function App() {
       } else if (errorStr.includes("safety") || errorStr.includes("blocked")) {
         errorMessage = "O conteúdo foi bloqueado pelos filtros de segurança da IA.";
       } else if (errorStr.includes("quota") || errorStr.includes("429") || errorStr.includes("exhausted")) {
-        errorMessage = "Limite de uso excedido (Quota). Aguarde um minuto e tente novamente.";
+        errorMessage = "Ocorreu um erro. Tente novamente em instantes.";
       } else if (errorStr.includes("not found") || errorStr.includes("404")) {
         errorMessage = "Modelo da IA não encontrado ou indisponível no momento.";
       } else {
