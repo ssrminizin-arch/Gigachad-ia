@@ -2,7 +2,8 @@ import { useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { motion, AnimatePresence } from "motion/react";
 import { cn } from "../lib/utils";
-import { AlertCircle, ChevronDown, ChevronUp, RefreshCcw } from "lucide-react";
+import { AlertCircle, ChevronDown, ChevronUp, RefreshCcw, Copy, Check } from "lucide-react";
+import { useRef } from "react";
 
 interface ChatMessageProps {
   role: "user" | "model";
@@ -65,7 +66,41 @@ export const ChatMessage = ({ role, content, imageData, errorDetails, onRetry }:
         )}
 
         <div className="markdown-body space-y-1">
-          <ReactMarkdown>{content}</ReactMarkdown>
+          <ReactMarkdown
+            components={{
+              pre: ({ node, children, ...props }: any) => {
+                const [copied, setCopied] = useState(false);
+                const preRef = useRef<HTMLPreElement>(null);
+
+                const handleCopy = () => {
+                  if (preRef.current) {
+                    const codeElement = preRef.current.querySelector('code');
+                    const text = codeElement ? codeElement.innerText : preRef.current.innerText;
+                    navigator.clipboard.writeText(text);
+                    setCopied(true);
+                    setTimeout(() => setCopied(false), 2000);
+                  }
+                };
+
+                return (
+                  <div className="relative group">
+                    <button
+                      onClick={handleCopy}
+                      className="absolute right-3 top-3 p-2 rounded-xl bg-zinc-900/80 border border-zinc-800 text-zinc-500 hover:text-emerald-500 hover:border-emerald-500/30 transition-all opacity-0 group-hover:opacity-100 z-10 shadow-xl backdrop-blur-sm"
+                      title="Copiar código"
+                    >
+                      {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                    </button>
+                    <pre ref={preRef} {...props}>
+                      {children}
+                    </pre>
+                  </div>
+                );
+              }
+            }}
+          >
+            {content}
+          </ReactMarkdown>
         </div>
 
         {hasError && (
