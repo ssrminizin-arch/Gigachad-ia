@@ -99,7 +99,7 @@ export const ChatMessage = ({ role, content, imageData, errorDetails, onRetry }:
               }
             }}
           >
-            {content}
+            {content.replace(/\n/g, "  \n")}
           </ReactMarkdown>
         </div>
 

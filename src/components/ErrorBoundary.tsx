@@ -1,4 +1,5 @@
 import React, { Component, ErrorInfo, ReactNode } from "react";
+import { User } from "lucide-react";
 
 interface Props {
   children: ReactNode;

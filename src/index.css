@@ -46,7 +46,7 @@
 .markdown-body h3 { @apply text-xl; }
 
 .markdown-body p {
-  @apply mb-4 last:mb-0;
+  @apply mb-4 last:mb-0 whitespace-pre-wrap;
 }
 
 .markdown-body code {

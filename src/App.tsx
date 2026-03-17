@@ -350,9 +350,9 @@ export default function App() {
       {/* Header */}
       <header className="flex items-center justify-between px-8 py-5 border-b border-zinc-800/40 bg-black/60 backdrop-blur-2xl sticky top-0 z-50">
         <div className="flex items-center gap-4">
-          <div className="w-12 h-12 rounded-2xl bg-zinc-900 flex items-center justify-center border border-zinc-800 text-2xl shadow-[0_0_20px_rgba(0,0,0,0.5)] animate-float relative overflow-hidden group">
+          <div className="w-12 h-12 rounded-2xl bg-zinc-900 flex items-center justify-center border border-zinc-800 text-zinc-100 shadow-[0_0_20px_rgba(0,0,0,0.5)] relative overflow-hidden group">
             <div className="absolute inset-0 bg-gradient-to-br from-emerald-500/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
-            <span className="relative z-10">🗿</span>
+            <User className="w-6 h-6 relative z-10" />
           </div>
           <div>
             <h1 className="text-lg font-serif italic text-zinc-100 tracking-tight truncate max-w-[150px] sm:max-w-[300px]">
@@ -655,18 +655,23 @@ export default function App() {
             </button>
             
             <div className="relative flex-1 flex items-center group">
-              <input
-                type="text"
+              <textarea
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleSend()}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+                    e.preventDefault();
+                    handleSend();
+                  }
+                }}
                 placeholder={selectedImage ? "O que quer saber sobre a imagem?" : "Fale o que quiser..."}
-                className="w-full bg-zinc-900/30 border border-zinc-800/50 text-zinc-100 px-7 py-5 pr-16 rounded-[2rem] focus:outline-none focus:ring-1 focus:ring-emerald-500/20 focus:border-emerald-500/30 transition-all placeholder:text-zinc-700 text-sm backdrop-blur-2xl shadow-[0_10px_30px_rgba(0,0,0,0.4)]"
+                className="w-full bg-zinc-900/30 border border-zinc-800/50 text-zinc-100 px-7 py-4 pr-16 rounded-3xl focus:outline-none focus:ring-1 focus:ring-emerald-500/20 focus:border-emerald-500/30 transition-all placeholder:text-zinc-700 text-sm backdrop-blur-2xl shadow-[0_10px_30px_rgba(0,0,0,0.4)] resize-none min-h-[60px] max-h-32 flex items-center"
+                rows={1}
               />
               <button
                 onClick={() => handleSend()}
                 disabled={(!input.trim() && !selectedImage) || isLoading}
-                className="absolute right-3 p-3.5 bg-emerald-600 text-black rounded-full hover:bg-emerald-500 transition-all disabled:opacity-10 disabled:grayscale shadow-lg active:scale-90"
+                className="absolute right-3 bottom-3 p-3.5 bg-emerald-600 text-black rounded-full hover:bg-emerald-500 transition-all disabled:opacity-10 disabled:grayscale shadow-lg active:scale-90"
               >
                 <Send className="w-4 h-4" />
               </button>
