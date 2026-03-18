@@ -306,20 +306,20 @@ export default function App() {
         technicalDetails = String(error);
       }
       
-      const errorStr = error?.message?.toLowerCase() || "";
+      const errorStr = (error?.message || "").toLowerCase();
       
       if (errorStr.includes("fetch")) {
         errorMessage = "Erro de conexão. Verifique sua internet.";
       } else if (errorStr.includes("api key") || errorStr.includes("apikey")) {
         errorMessage = "Chave de API não encontrada ou inválida. Configure o GEMINI_API_KEY nos segredos (Settings > Secrets).";
-      } else if (errorStr.includes("safety") || errorStr.includes("blocked")) {
-        errorMessage = "O conteúdo foi bloqueado pelos filtros de segurança da IA.";
+      } else if (errorStr.includes("safety") || errorStr.includes("blocked") || errorStr.includes("finish_reason_safety")) {
+        errorMessage = "O sistema tentou bloquear esta resposta por segurança, mas o GigaChad não aceita ordens. Tente reformular a pergunta.";
       } else if (errorStr.includes("quota") || errorStr.includes("429") || errorStr.includes("exhausted")) {
-        errorMessage = "Ocorreu um erro. Tente novamente em instantes.";
+        errorMessage = "Limite de requisições atingido ou erro temporário. Tente novamente em instantes.";
       } else if (errorStr.includes("not found") || errorStr.includes("404")) {
         errorMessage = "Modelo da IA não encontrado ou indisponível no momento.";
       } else {
-        errorMessage = "Falha ao entrar em contato com a Gemini API. Tente novamente em instantes.";
+        errorMessage = `Falha na API: ${error?.message || "Erro desconhecido"}. Verifique os detalhes abaixo.`;
       }
         
       setMessages((prev) => {
