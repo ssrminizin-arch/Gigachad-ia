@@ -1,21 +1,23 @@
 import { useState, useRef, useEffect } from "react";
-import { Send, Trash2, Shield, Zap, User, Image as ImageIcon, X, LogOut, Key, Copy, Check, Palette } from "lucide-react";
+import { Send, Trash2, Shield, Zap, User, Image as ImageIcon, X, LogOut, Key, Copy, Check, Palette, Menu, Plus, MessageSquare } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { ChatMessage } from "./components/ChatMessage";
 import { geminiService } from "./services/gemini";
 import { auth, db } from "./firebase";
 import { onAuthStateChanged, signOut } from "firebase/auth";
-import { doc, getDoc, collection, query, where, onSnapshot, setDoc } from "firebase/firestore";
+import { doc, getDoc, collection, query, where, onSnapshot, setDoc, addDoc, serverTimestamp, orderBy, limit, deleteDoc } from "firebase/firestore";
 import { Auth } from "./components/Auth";
-import { UserProfile, AccessCode } from "./types";
-import { addDays } from "date-fns";
+import { UserProfile, AccessCode, Chat, Message as MessageType } from "./types";
+import { addDays, isAfter } from "date-fns";
 import { cn } from "./lib/utils";
 
 interface Message {
+  id?: string;
   role: "user" | "model";
   content: string;
   imageData?: string;
   errorDetails?: string;
+  createdAt?: any;
 }
 
 type Theme = 'original' | 'red-white' | 'white-black';
@@ -67,6 +69,9 @@ export default function App() {
   const currentTheme = themes[theme];
   
   const [messages, setMessages] = useState<Message[]>([]);
+  const [chats, setChats] = useState<Chat[]>([]);
+  const [activeChatId, setActiveChatId] = useState<string | null>(null);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [chatTopic, setChatTopic] = useState("Novo Chat");
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -129,18 +134,90 @@ export default function App() {
     };
   }, []);
 
+  // Listen for user's chats
+  useEffect(() => {
+    if (!user) {
+      setChats([]);
+      setActiveChatId(null);
+      return;
+    }
+
+    const q = query(
+      collection(db, "chats"),
+      where("userId", "==", user.uid),
+      orderBy("lastMessageAt", "desc")
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const chatList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Chat));
+      setChats(chatList);
+      
+      // If no active chat and we have chats, pick the first one
+      if (!activeChatId && chatList.length > 0) {
+        // setActiveChatId(chatList[0].id); // Optional: auto-select first chat
+      }
+    });
+
+    return () => unsubscribe();
+  }, [user]);
+
+  // Listen for messages in active chat
+  useEffect(() => {
+    if (!activeChatId) {
+      setMessages([]);
+      setChatTopic("Novo Chat");
+      return;
+    }
+
+    const chat = chats.find(c => c.id === activeChatId);
+    if (chat) setChatTopic(chat.title);
+
+    const q = query(
+      collection(db, "chats", activeChatId, "messages"),
+      orderBy("createdAt", "asc")
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const msgList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Message));
+      setMessages(msgList);
+    });
+
+    return () => unsubscribe();
+  }, [activeChatId, chats]);
+
   useEffect(() => {
     if (user && userProfile && currentIp) {
       const isOwner = user.email === 'afizportapau@gmail.com';
       if (isOwner) {
         setIsIpVerified(true);
-      } else if (userProfile.lastIp === currentIp) {
-        setIsIpVerified(true);
       } else {
-        setIsIpVerified(false);
+        const ipMatches = userProfile.lastIp === currentIp;
+        const accessExpired = userProfile.accessExpiresAt && isAfter(new Date(), new Date(userProfile.accessExpiresAt));
+        
+        if (accessExpired) {
+          setIsIpVerified(false);
+        } else if (ipMatches) {
+          setIsIpVerified(true);
+        } else {
+          setIsIpVerified(false);
+        }
       }
     }
   }, [user, userProfile, currentIp]);
+
+  useEffect(() => {
+    const checkExpiration = () => {
+      if (user && userProfile && user.email !== 'afizportapau@gmail.com') {
+        const accessExpired = userProfile.accessExpiresAt && isAfter(new Date(), new Date(userProfile.accessExpiresAt));
+        if (accessExpired) {
+          setIsIpVerified(false);
+        }
+      }
+    };
+
+    const interval = setInterval(checkExpiration, 60000); // Check every minute
+    return () => clearInterval(interval);
+  }, [user, userProfile]);
 
   useEffect(() => {
     if (userProfile?.role === 'admin') {
@@ -202,11 +279,52 @@ export default function App() {
     }
   };
 
+  const createNewChat = async () => {
+    if (!user) return;
+    setActiveChatId(null);
+    setMessages([]);
+    setChatTopic("Novo Chat");
+    setIsSidebarOpen(false);
+  };
+
+  const deleteChat = async (chatId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    
+    try {
+      await deleteDoc(doc(db, "chats", chatId));
+      if (activeChatId === chatId) {
+        createNewChat();
+      }
+    } catch (error) {
+      console.error("Erro ao excluir chat:", error);
+    }
+  };
+
   const handleSend = async (retryMessage?: string, retryImage?: string) => {
     const userMessage = retryMessage || input.trim();
     const imageToUse = retryImage || selectedImage;
     
-    if ((!userMessage && !imageToUse) || isLoading) return;
+    if ((!userMessage && !imageToUse) || isLoading || !user) return;
+
+    let currentChatId = activeChatId;
+
+    // Create new chat if none active
+    if (!currentChatId && !userMessage.startsWith("/")) {
+      try {
+        const title = userMessage.length > 30 ? userMessage.substring(0, 30) + "..." : userMessage;
+        const chatDoc = await addDoc(collection(db, "chats"), {
+          userId: user.uid,
+          title: title,
+          createdAt: serverTimestamp(),
+          lastMessageAt: serverTimestamp()
+        });
+        currentChatId = chatDoc.id;
+        setActiveChatId(currentChatId);
+      } catch (error) {
+        console.error("Erro ao criar chat:", error);
+        return;
+      }
+    }
 
     // Handle /gerargiga command
     if (userMessage.startsWith("/gerargiga")) {
@@ -227,19 +345,24 @@ export default function App() {
     if (!retryMessage) {
       setInput("");
       setSelectedImage(null);
-      
-      if (messages.length === 0) {
-        const topic = userMessage.length > 30 ? userMessage.substring(0, 30) + "..." : userMessage;
-        setChatTopic(topic);
-      }
     }
     
-    if (!retryMessage) {
-      setMessages((prev) => [...prev, { 
-        role: "user", 
-        content: userMessage,
-        imageData: imageToUse?.split(',')[1]
-      }]);
+    // Save User Message to Firestore
+    if (!retryMessage && currentChatId) {
+      try {
+        await addDoc(collection(db, "chats", currentChatId, "messages"), {
+          role: "user",
+          content: userMessage,
+          imageData: imageToUse?.split(',')[1] || null,
+          createdAt: serverTimestamp()
+        });
+        
+        await setDoc(doc(db, "chats", currentChatId), {
+          lastMessageAt: serverTimestamp()
+        }, { merge: true });
+      } catch (error) {
+        console.error("Erro ao salvar mensagem:", error);
+      }
     }
     
     setIsLoading(true);
@@ -257,6 +380,9 @@ export default function App() {
 
       let assistantContent = "";
       let assistantImage = "";
+      
+      // We don't add the empty model message to Firestore yet, 
+      // we'll save it only when finished to avoid partial writes
       setMessages((prev) => [...prev, { role: "model", content: "" }]);
 
       const stream = geminiService.sendMessageStream(userMessage, history, imageToUse || undefined);
@@ -290,18 +416,19 @@ export default function App() {
         }
       }
       
-      setMessages((prev) => {
-        const newMessages = [...prev];
-        const lastMessage = newMessages[newMessages.length - 1];
-        if (lastMessage && lastMessage.role === "model") {
-          newMessages[newMessages.length - 1] = {
-            role: "model",
-            content: assistantContent,
-            imageData: assistantImage || undefined
-          };
-        }
-        return newMessages;
-      });
+      // Save Model Message to Firestore
+      if (currentChatId) {
+        await addDoc(collection(db, "chats", currentChatId, "messages"), {
+          role: "model",
+          content: assistantContent,
+          imageData: assistantImage || null,
+          createdAt: serverTimestamp()
+        });
+        
+        await setDoc(doc(db, "chats", currentChatId), {
+          lastMessageAt: serverTimestamp()
+        }, { merge: true });
+      }
 
     } catch (error: any) {
       console.error("Failed to send message:", error);
@@ -330,57 +457,143 @@ export default function App() {
   }
 
   return (
-    <div className={`flex flex-col h-[100dvh] ${currentTheme.bg} ${currentTheme.text} font-sans selection:bg-zinc-800 selection:text-white overflow-hidden transition-colors duration-500`}>
-      {/* Header */}
-      <header className={`flex items-center justify-between px-8 py-5 border-b ${currentTheme.header} backdrop-blur-2xl sticky top-0 z-50 transition-colors`}>
-        <div className="flex items-center gap-4">
-          <div className={`w-12 h-12 rounded-2xl ${theme === 'red-white' ? 'bg-red-100 border-red-200' : 'bg-zinc-900 border-zinc-800'} flex items-center justify-center border ${currentTheme.headerText} shadow-[0_0_20px_rgba(0,0,0,0.5)] relative overflow-hidden group`}>
-            <div className={`absolute inset-0 bg-gradient-to-br ${theme === 'red-white' ? 'from-red-500/10' : 'from-emerald-500/10'} to-transparent opacity-0 group-hover:opacity-100 transition-opacity`} />
-            <User className="w-6 h-6 relative z-10" />
-          </div>
-          <div>
-            <h1 className={`text-lg font-serif italic ${currentTheme.headerText} tracking-tight truncate max-w-[150px] sm:max-w-[300px]`}>
-              {chatTopic}
-            </h1>
-            <p className="text-[10px] text-zinc-500 uppercase tracking-widest font-bold">
-              {userProfile?.role === 'admin' ? 'Administrador' : 'Usuário'}
-            </p>
-          </div>
-        </div>
-        
-        <div className="flex items-center gap-2">
-          <button 
-            onClick={toggleTheme}
-            className={`p-2 transition-colors rounded-lg text-zinc-500 hover:${currentTheme.headerText} hover:bg-zinc-900/20`}
-            title="Trocar Tema"
-          >
-            <Palette className="w-4 h-4" />
-          </button>
-          {userProfile?.role === 'admin' && (
-            <button 
-              onClick={() => setIsAdminMode(!isAdminMode)}
-              className={`p-2 transition-colors rounded-lg ${isAdminMode ? 'text-emerald-500 bg-emerald-500/10' : 'text-zinc-500 hover:text-zinc-100 hover:bg-zinc-900'}`}
-              title="Chaves de Acesso"
+    <div className={`flex h-[100dvh] ${currentTheme.bg} ${currentTheme.text} font-sans selection:bg-zinc-800 selection:text-white overflow-hidden transition-colors duration-500`}>
+      {/* Sidebar */}
+      <AnimatePresence>
+        {isSidebarOpen && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsSidebarOpen(false)}
+              className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[60] lg:hidden"
+            />
+            <motion.aside
+              initial={{ x: -300 }}
+              animate={{ x: 0 }}
+              exit={{ x: -300 }}
+              className={`fixed inset-y-0 left-0 w-[280px] ${currentTheme.header} border-r border-zinc-800/40 z-[70] flex flex-col transition-colors lg:relative lg:translate-x-0`}
             >
-              <Key className="w-4 h-4" />
+              <div className="p-4 border-b border-zinc-800/40">
+                <button
+                  onClick={createNewChat}
+                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl ${currentTheme.button} font-bold transition-all shadow-lg active:scale-95`}
+                >
+                  <Plus className="w-5 h-5" />
+                  Novo Chat
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-3 space-y-2">
+                <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest px-3 mb-2">Histórico</p>
+                {chats.length === 0 ? (
+                  <div className="px-3 py-8 text-center">
+                    <MessageSquare className="w-8 h-8 text-zinc-800 mx-auto mb-2 opacity-20" />
+                    <p className="text-xs text-zinc-600 italic">Nenhum chat salvo.</p>
+                  </div>
+                ) : (
+                  chats.map((chat) => (
+                    <div
+                      key={chat.id}
+                      onClick={() => {
+                        setActiveChatId(chat.id);
+                        setIsSidebarOpen(false);
+                      }}
+                      className={`group flex items-center justify-between p-3 rounded-xl cursor-pointer transition-all ${
+                        activeChatId === chat.id 
+                          ? 'bg-zinc-800/50 border border-zinc-700/50 text-zinc-100' 
+                          : 'hover:bg-zinc-900/50 text-zinc-500 hover:text-zinc-300'
+                      }`}
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <MessageSquare className={`w-4 h-4 flex-shrink-0 ${activeChatId === chat.id ? currentTheme.accent : ''}`} />
+                        <span className="text-sm font-medium truncate">{chat.title}</span>
+                      </div>
+                      <button
+                        onClick={(e) => deleteChat(chat.id, e)}
+                        className="opacity-0 group-hover:opacity-100 p-1.5 hover:text-red-500 transition-all rounded-lg hover:bg-red-500/10"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+
+              <div className="p-4 border-t border-zinc-800/40">
+                <div className="flex items-center gap-3 px-3 py-2">
+                  <div className="w-8 h-8 rounded-lg bg-zinc-800 flex items-center justify-center">
+                    <User className="w-4 h-4 text-zinc-400" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-xs font-bold text-zinc-200 truncate">{user?.email}</p>
+                    <p className="text-[9px] text-zinc-500 uppercase tracking-widest">{userProfile?.role}</p>
+                  </div>
+                </div>
+              </div>
+            </motion.aside>
+          </>
+        )}
+      </AnimatePresence>
+
+      <div className="flex-1 flex flex-col min-w-0 relative">
+        {/* Header */}
+        <header className={`flex items-center justify-between px-4 sm:px-8 py-5 border-b ${currentTheme.header} backdrop-blur-2xl sticky top-0 z-50 transition-colors`}>
+          <div className="flex items-center gap-3 sm:gap-4">
+            <button
+              onClick={() => setIsSidebarOpen(true)}
+              className="lg:hidden p-2 text-zinc-500 hover:text-zinc-100 transition-colors rounded-lg hover:bg-zinc-900"
+            >
+              <Menu className="w-5 h-5" />
             </button>
-          )}
-          <button 
-            onClick={() => setMessages([])}
-            className="p-2 text-zinc-500 hover:text-zinc-100 transition-colors rounded-lg hover:bg-zinc-900"
-            title="Limpar Chat"
-          >
-            <Trash2 className="w-4 h-4" />
-          </button>
-          <button 
-            onClick={() => signOut(auth)}
-            className="p-2 text-zinc-500 hover:text-red-500 transition-colors rounded-lg hover:bg-zinc-900"
-            title="Sair"
-          >
-            <LogOut className="w-4 h-4" />
-          </button>
-        </div>
-      </header>
+            <div className={`hidden sm:flex w-12 h-12 rounded-2xl ${theme === 'red-white' ? 'bg-red-100 border-red-200' : 'bg-zinc-900 border-zinc-800'} items-center justify-center border ${currentTheme.headerText} shadow-[0_0_20px_rgba(0,0,0,0.5)] relative overflow-hidden group`}>
+              <div className={`absolute inset-0 bg-gradient-to-br ${theme === 'red-white' ? 'from-red-500/10' : 'from-emerald-500/10'} to-transparent opacity-0 group-hover:opacity-100 transition-opacity`} />
+              <User className="w-6 h-6 relative z-10" />
+            </div>
+            <div className="min-w-0">
+              <h1 className={`text-base sm:text-lg font-serif italic ${currentTheme.headerText} tracking-tight truncate max-w-[120px] sm:max-w-[300px]`}>
+                {chatTopic}
+              </h1>
+              <p className="text-[10px] text-zinc-500 uppercase tracking-widest font-bold">
+                {userProfile?.role === 'admin' ? 'Administrador' : 'Usuário'}
+              </p>
+            </div>
+          </div>
+          
+          <div className="flex items-center gap-1 sm:gap-2">
+            <button 
+              onClick={toggleTheme}
+              className={`p-2 transition-colors rounded-lg text-zinc-500 hover:${currentTheme.headerText} hover:bg-zinc-900/20`}
+              title="Trocar Tema"
+            >
+              <Palette className="w-4 h-4" />
+            </button>
+            {userProfile?.role === 'admin' && (
+              <button 
+                onClick={() => setIsAdminMode(!isAdminMode)}
+                className={`p-2 transition-colors rounded-lg ${isAdminMode ? 'text-emerald-500 bg-emerald-500/10' : 'text-zinc-500 hover:text-zinc-100 hover:bg-zinc-900'}`}
+                title="Chaves de Acesso"
+              >
+                <Key className="w-4 h-4" />
+              </button>
+            )}
+            <button 
+              onClick={createNewChat}
+              className="p-2 text-zinc-500 hover:text-zinc-100 transition-colors rounded-lg hover:bg-zinc-900"
+              title="Novo Chat"
+            >
+              <Plus className="w-4 h-4" />
+            </button>
+            <button 
+              onClick={() => signOut(auth)}
+              className="p-2 text-zinc-500 hover:text-red-500 transition-colors rounded-lg hover:bg-zinc-900"
+              title="Sair"
+            >
+              <LogOut className="w-4 h-4" />
+            </button>
+          </div>
+        </header>
 
       {/* Chat Area */}
       <main 
@@ -570,5 +783,6 @@ export default function App() {
         </div>
       </footer>
     </div>
+  </div>
   );
 }

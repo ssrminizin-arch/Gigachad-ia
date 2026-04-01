@@ -14,7 +14,7 @@ import {
 } from 'firebase/firestore';
 import { motion, AnimatePresence } from 'motion/react';
 import { Mail, Lock, Key, ArrowRight, ShieldCheck, MailCheck, RefreshCw, Globe, AlertCircle } from 'lucide-react';
-import { isAfter } from 'date-fns';
+import { isAfter, addDays } from 'date-fns';
 
 const ADMIN_INITIAL_KEY = (import.meta as any).env.VITE_ADMIN_INITIAL_KEY || 'ADMIN_SECRET_2026';
 
@@ -31,6 +31,7 @@ export function Auth({ onVerified }: AuthProps) {
   const [loading, setLoading] = useState(false);
   const [needsVerification, setNeedsVerification] = useState(false);
   const [needsCode, setNeedsCode] = useState(false);
+  const [isExpired, setIsExpired] = useState(false);
   const [resendLoading, setResendLoading] = useState(false);
   const [currentIp, setCurrentIp] = useState<string | null>(null);
 
@@ -58,8 +59,16 @@ export function Auth({ onVerified }: AuthProps) {
             const profileData = profileDoc.data();
             const isOwner = user.email === 'afizportapau@gmail.com';
             const ipMatches = currentIp && profileData.lastIp && currentIp === profileData.lastIp;
-            if (!isOwner && !ipMatches) {
-              setNeedsCode(true);
+            const accessExpired = profileData.accessExpiresAt && isAfter(new Date(), new Date(profileData.accessExpiresAt));
+            
+            if (!isOwner) {
+              if (accessExpired) {
+                setIsExpired(true);
+                setNeedsCode(true);
+              } else if (!ipMatches) {
+                setIsExpired(false);
+                setNeedsCode(true);
+              }
             }
           }
         }
@@ -95,6 +104,12 @@ export function Auth({ onVerified }: AuthProps) {
 
       if (accessCode === ADMIN_INITIAL_KEY) {
         // Admin key is always valid
+        if (currentIp) {
+          await updateDoc(doc(db, 'users', user.uid), {
+            lastIp: currentIp,
+            accessExpiresAt: addDays(new Date(), 3650).toISOString() // 10 years for admin key
+          });
+        }
       } else {
         const codeDoc = await getDoc(doc(db, 'accessCodes', accessCode));
         if (!codeDoc.exists()) throw new Error('Código de acesso inválido.');
@@ -105,16 +120,26 @@ export function Auth({ onVerified }: AuthProps) {
         if (codeData.used && codeData.usedBy !== user.uid) {
           throw new Error('Este código pertence a outro usuário.');
         }
-      }
 
-      // Update last IP
-      if (currentIp) {
-        await updateDoc(doc(db, 'users', user.uid), {
-          lastIp: currentIp
-        });
+        // Update last IP and access expiration
+        if (currentIp) {
+          await updateDoc(doc(db, 'users', user.uid), {
+            lastIp: currentIp,
+            accessExpiresAt: codeData.expiresAt
+          });
+        }
+
+        // If it was a fresh code, mark as used
+        if (!codeData.used) {
+          await updateDoc(doc(db, 'accessCodes', accessCode), {
+            used: true,
+            usedBy: user.uid
+          });
+        }
       }
       
       setNeedsCode(false);
+      setIsExpired(false);
       onVerified?.();
     } catch (err: any) {
       setError(err.message || 'Erro ao verificar código.');
@@ -136,16 +161,29 @@ export function Auth({ onVerified }: AuthProps) {
         const userCredential = await signInWithEmailAndPassword(auth, email, password);
         const user = userCredential.user;
 
-        // Fetch profile to check IP
+        // Fetch profile to check IP and Expiration
         const profileDoc = await getDoc(doc(db, 'users', user.uid));
         if (profileDoc.exists()) {
           const profileData = profileDoc.data();
           const ipMatches = currentIp && profileData.lastIp && currentIp === profileData.lastIp;
+          const accessExpired = profileData.accessExpiresAt && isAfter(new Date(), new Date(profileData.accessExpiresAt));
           
-          if (!isOwnerEmail && !ipMatches) {
-            setNeedsCode(true);
+          if (!isOwnerEmail) {
+            if (accessExpired) {
+              setIsExpired(true);
+              setNeedsCode(true);
+            } else if (!ipMatches) {
+              setIsExpired(false);
+              setNeedsCode(true);
+            } else if (currentIp) {
+              // Update last IP if it matches
+              await updateDoc(doc(db, 'users', user.uid), {
+                lastIp: currentIp
+              });
+              onVerified?.();
+            }
           } else if (currentIp) {
-            // Update last IP if it matches or if it's the owner
+            // Update last IP for owner
             await updateDoc(doc(db, 'users', user.uid), {
               lastIp: currentIp
             });
@@ -159,6 +197,7 @@ export function Auth({ onVerified }: AuthProps) {
       } else {
         // Sign Up Logic
         let role: 'admin' | 'user' = isOwnerEmail ? 'admin' : 'user';
+        let accessExpiresAt = addDays(new Date(), 3650).toISOString(); // Default for owner
 
         if (!isOwnerEmail) {
           if (accessCode === ADMIN_INITIAL_KEY) {
@@ -169,6 +208,7 @@ export function Auth({ onVerified }: AuthProps) {
             const codeData = codeDoc.data();
             if (codeData.used) throw new Error('Este código já foi utilizado.');
             if (isAfter(new Date(), new Date(codeData.expiresAt))) throw new Error('Este código expirou.');
+            accessExpiresAt = codeData.expiresAt;
           }
         }
 
@@ -181,7 +221,8 @@ export function Auth({ onVerified }: AuthProps) {
           role: role,
           createdAt: new Date().toISOString(),
           registeredWithCode: isOwnerEmail ? 'owner' : accessCode,
-          lastIp: currentIp || undefined
+          lastIp: currentIp || undefined,
+          accessExpiresAt: accessExpiresAt
         });
 
         if (!isOwnerEmail && accessCode !== ADMIN_INITIAL_KEY) {
@@ -259,18 +300,24 @@ export function Auth({ onVerified }: AuthProps) {
           className="w-full max-w-md bg-zinc-900/50 border border-zinc-800 p-8 rounded-3xl backdrop-blur-xl"
         >
           <div className="text-center mb-8">
-            <div className="w-16 h-16 bg-amber-500/10 border border-amber-500/20 rounded-2xl flex items-center justify-center mx-auto mb-4">
-              <Globe className="w-8 h-8 text-amber-500" />
+            <div className={`w-16 h-16 ${isExpired ? 'bg-red-500/10 border-red-500/20' : 'bg-amber-500/10 border-amber-500/20'} rounded-2xl flex items-center justify-center mx-auto mb-4`}>
+              {isExpired ? <AlertCircle className="w-8 h-8 text-red-500" /> : <Globe className="w-8 h-8 text-amber-500" />}
             </div>
-            <h1 className="text-2xl font-serif italic text-zinc-100">IP não reconhecido</h1>
+            <h1 className="text-2xl font-serif italic text-zinc-100">
+              {isExpired ? 'Acesso Expirado' : 'IP não reconhecido'}
+            </h1>
             <p className="text-zinc-500 text-sm mt-2">
-              Detectamos um acesso de um novo local. Por favor, insira seu código de acesso para confirmar sua identidade.
+              {isExpired 
+                ? 'Seu período de acesso de 30 dias terminou. Por favor, insira um novo código de acesso para continuar usando a IA.' 
+                : 'Detectamos um acesso de um novo local. Por favor, insira seu código de acesso para confirmar sua identidade.'}
             </p>
           </div>
 
           <form onSubmit={handleVerifyCode} className="space-y-4">
             <div className="space-y-2">
-              <label className="text-xs font-bold text-zinc-500 uppercase tracking-widest ml-1">Código de Acesso</label>
+              <label className="text-xs font-bold text-zinc-500 uppercase tracking-widest ml-1">
+                {isExpired ? 'Novo Código de Acesso' : 'Código de Acesso'}
+              </label>
               <div className="relative">
                 <Key className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-600" />
                 <input 

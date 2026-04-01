@@ -7,6 +7,23 @@ export interface UserProfile {
   role: UserRole;
   createdAt: string;
   lastIp?: string;
+  accessExpiresAt?: string;
+}
+
+export interface Message {
+  id?: string;
+  role: 'user' | 'model';
+  content: string;
+  imageData?: string;
+  createdAt: string;
+}
+
+export interface Chat {
+  id: string;
+  userId: string;
+  title: string;
+  lastMessageAt: string;
+  createdAt: string;
 }
 
 export interface AccessCode {
