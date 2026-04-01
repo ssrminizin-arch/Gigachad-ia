@@ -1,0 +1,40 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile information",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Firebase Auth UID" },
+        "email": { "type": "string", "description": "User email" },
+        "role": { "type": "string", "enum": ["admin", "user"], "description": "User role" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Account creation timestamp" }
+      },
+      "required": ["uid", "email", "role", "createdAt"]
+    },
+    "AccessCode": {
+      "title": "AccessCode",
+      "description": "Codes required for account creation",
+      "type": "object",
+      "properties": {
+        "code": { "type": "string", "description": "The access code" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "When the code was generated" },
+        "expiresAt": { "type": "string", "format": "date-time", "description": "When the code expires (30 days after creation)" },
+        "used": { "type": "boolean", "description": "Whether the code has been used" },
+        "usedBy": { "type": "string", "description": "UID of the user who used the code" },
+        "isPermanent": { "type": "boolean", "description": "Whether the code is a permanent admin key" }
+      },
+      "required": ["code", "createdAt", "expiresAt", "used"]
+    }
+  },
+  "firestore": {
+    "/users/{uid}": {
+      "schema": "User",
+      "description": "User profiles"
+    },
+    "/accessCodes/{code}": {
+      "schema": "AccessCode",
+      "description": "Access codes for registration"
+    }
+  }
+}
