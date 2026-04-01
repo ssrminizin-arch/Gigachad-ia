@@ -60,6 +60,8 @@ export default function App() {
   const [user, setUser] = useState<any>(null);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
+  const [currentIp, setCurrentIp] = useState<string | null>(null);
+  const [isIpVerified, setIsIpVerified] = useState(false);
   const [theme, setTheme] = useState<Theme>('original');
   
   const currentTheme = themes[theme];
@@ -77,20 +79,68 @@ export default function App() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+    const fetchIp = async () => {
+      try {
+        const response = await fetch('https://api.ipify.org?format=json');
+        const data = await response.json();
+        setCurrentIp(data.ip);
+      } catch (err) {
+        console.error('Failed to fetch IP:', err);
+      }
+    };
+    fetchIp();
+
+    let profileUnsubscribe: (() => void) | null = null;
+
+    const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
       setUser(firebaseUser);
+      
+      if (profileUnsubscribe) {
+        profileUnsubscribe();
+        profileUnsubscribe = null;
+      }
+
       if (firebaseUser) {
-        const profileDoc = await getDoc(doc(db, "users", firebaseUser.uid));
-        if (profileDoc.exists()) {
-          setUserProfile(profileDoc.data() as UserProfile);
-        }
+        profileUnsubscribe = onSnapshot(doc(db, "users", firebaseUser.uid), (doc) => {
+          if (doc.exists()) {
+            const profileData = doc.data() as UserProfile;
+            setUserProfile(profileData);
+            
+            const isOwner = firebaseUser.email === 'afizportapau@gmail.com';
+            if (isOwner) {
+              setIsIpVerified(true);
+            }
+          }
+          setIsAuthReady(true);
+        }, (error) => {
+          console.error("Profile listener error:", error);
+          setIsAuthReady(true);
+        });
       } else {
         setUserProfile(null);
+        setIsIpVerified(false);
+        setIsAuthReady(true);
       }
-      setIsAuthReady(true);
     });
-    return () => unsubscribe();
+
+    return () => {
+      unsubscribe();
+      if (profileUnsubscribe) profileUnsubscribe();
+    };
   }, []);
+
+  useEffect(() => {
+    if (user && userProfile && currentIp) {
+      const isOwner = user.email === 'afizportapau@gmail.com';
+      if (isOwner) {
+        setIsIpVerified(true);
+      } else if (userProfile.lastIp === currentIp) {
+        setIsIpVerified(true);
+      } else {
+        setIsIpVerified(false);
+      }
+    }
+  }, [user, userProfile, currentIp]);
 
   useEffect(() => {
     if (userProfile?.role === 'admin') {
@@ -275,7 +325,9 @@ export default function App() {
   };
 
   if (!isAuthReady) return null;
-  if (!user || !user.emailVerified) return <Auth />;
+  if (!user || !user.emailVerified || !isIpVerified) {
+    return <Auth onVerified={() => setIsIpVerified(true)} />;
+  }
 
   return (
     <div className={`flex flex-col h-[100dvh] ${currentTheme.bg} ${currentTheme.text} font-sans selection:bg-zinc-800 selection:text-white overflow-hidden transition-colors duration-500`}>

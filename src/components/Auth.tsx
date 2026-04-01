@@ -13,12 +13,16 @@ import {
   updateDoc
 } from 'firebase/firestore';
 import { motion, AnimatePresence } from 'motion/react';
-import { Mail, Lock, Key, ArrowRight, ShieldCheck, MailCheck, RefreshCw } from 'lucide-react';
+import { Mail, Lock, Key, ArrowRight, ShieldCheck, MailCheck, RefreshCw, Globe, AlertCircle } from 'lucide-react';
 import { isAfter } from 'date-fns';
 
 const ADMIN_INITIAL_KEY = (import.meta as any).env.VITE_ADMIN_INITIAL_KEY || 'ADMIN_SECRET_2026';
 
-export function Auth() {
+interface AuthProps {
+  onVerified?: () => void;
+}
+
+export function Auth({ onVerified }: AuthProps) {
   const [isLogin, setIsLogin] = useState(true);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -26,18 +30,46 @@ export function Auth() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [needsVerification, setNeedsVerification] = useState(false);
+  const [needsCode, setNeedsCode] = useState(false);
   const [resendLoading, setResendLoading] = useState(false);
+  const [currentIp, setCurrentIp] = useState<string | null>(null);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
-      if (user && !user.emailVerified) {
-        setNeedsVerification(true);
+    const fetchIp = async () => {
+      try {
+        const response = await fetch('https://api.ipify.org?format=json');
+        const data = await response.json();
+        setCurrentIp(data.ip);
+      } catch (err) {
+        console.error('Failed to fetch IP:', err);
+      }
+    };
+    fetchIp();
+
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      if (user) {
+        if (!user.emailVerified) {
+          setNeedsVerification(true);
+        } else {
+          setNeedsVerification(false);
+          // Check if IP needs verification even if just re-mounting
+          const profileDoc = await getDoc(doc(db, 'users', user.uid));
+          if (profileDoc.exists()) {
+            const profileData = profileDoc.data();
+            const isOwner = user.email === 'afizportapau@gmail.com';
+            const ipMatches = currentIp && profileData.lastIp && currentIp === profileData.lastIp;
+            if (!isOwner && !ipMatches) {
+              setNeedsCode(true);
+            }
+          }
+        }
       } else {
         setNeedsVerification(false);
+        setNeedsCode(false);
       }
     });
     return () => unsubscribe();
-  }, []);
+  }, [currentIp]);
 
   const handleResendEmail = async () => {
     if (!auth.currentUser) return;
@@ -49,6 +81,45 @@ export function Auth() {
       setError(err.message);
     } finally {
       setResendLoading(false);
+    }
+  };
+
+  const handleVerifyCode = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setLoading(true);
+
+    try {
+      if (!auth.currentUser) throw new Error('Usuário não autenticado.');
+      const user = auth.currentUser;
+
+      if (accessCode === ADMIN_INITIAL_KEY) {
+        // Admin key is always valid
+      } else {
+        const codeDoc = await getDoc(doc(db, 'accessCodes', accessCode));
+        if (!codeDoc.exists()) throw new Error('Código de acesso inválido.');
+        
+        const codeData = codeDoc.data();
+        if (isAfter(new Date(), new Date(codeData.expiresAt))) throw new Error('Este código expirou.');
+        
+        if (codeData.used && codeData.usedBy !== user.uid) {
+          throw new Error('Este código pertence a outro usuário.');
+        }
+      }
+
+      // Update last IP
+      if (currentIp) {
+        await updateDoc(doc(db, 'users', user.uid), {
+          lastIp: currentIp
+        });
+      }
+      
+      setNeedsCode(false);
+      onVerified?.();
+    } catch (err: any) {
+      setError(err.message || 'Erro ao verificar código.');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -65,24 +136,20 @@ export function Auth() {
         const userCredential = await signInWithEmailAndPassword(auth, email, password);
         const user = userCredential.user;
 
-        if (!isOwnerEmail) {
-          // Verify access code on login for non-admins
-          if (accessCode === ADMIN_INITIAL_KEY) {
-            // Admin key is always valid
-          } else {
-            const codeDoc = await getDoc(doc(db, 'accessCodes', accessCode));
-            if (!codeDoc.exists()) throw new Error('Código de acesso inválido.');
-            
-            const codeData = codeDoc.data();
-            if (isAfter(new Date(), new Date(codeData.expiresAt))) throw new Error('Este código expirou.');
-            
-            // If the code is used, it must belong to this user
-            if (codeData.used && codeData.usedBy !== user.uid) {
-              throw new Error('Este código pertence a outro usuário.');
-            }
-            
-            // If the code is NOT used, the user might be "claiming" it now (though usually done at register)
-            // For simplicity, we'll just ensure it's a valid code for this user.
+        // Fetch profile to check IP
+        const profileDoc = await getDoc(doc(db, 'users', user.uid));
+        if (profileDoc.exists()) {
+          const profileData = profileDoc.data();
+          const ipMatches = currentIp && profileData.lastIp && currentIp === profileData.lastIp;
+          
+          if (!isOwnerEmail && !ipMatches) {
+            setNeedsCode(true);
+          } else if (currentIp) {
+            // Update last IP if it matches or if it's the owner
+            await updateDoc(doc(db, 'users', user.uid), {
+              lastIp: currentIp
+            });
+            onVerified?.();
           }
         }
 
@@ -113,7 +180,8 @@ export function Auth() {
           email: user.email,
           role: role,
           createdAt: new Date().toISOString(),
-          registeredWithCode: isOwnerEmail ? 'owner' : accessCode
+          registeredWithCode: isOwnerEmail ? 'owner' : accessCode,
+          lastIp: currentIp || undefined
         });
 
         if (!isOwnerEmail && accessCode !== ADMIN_INITIAL_KEY) {
@@ -126,11 +194,11 @@ export function Auth() {
         // Send Verification Email
         await sendEmailVerification(user);
         setNeedsVerification(true);
+        onVerified?.();
       }
     } catch (err: any) {
       console.error(err);
       setError(err.message || 'Ocorreu um erro.');
-      // If login failed due to code, sign out
       if (isLogin) await auth.signOut();
     } finally {
       setLoading(false);
@@ -177,6 +245,75 @@ export function Auth() {
               Sair e tentar outro email
             </button>
           </div>
+        </motion.div>
+      </div>
+    );
+  }
+
+  if (needsCode) {
+    return (
+      <div className="min-h-screen flex items-center justify-center p-4 bg-[#030303]">
+        <motion.div 
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="w-full max-w-md bg-zinc-900/50 border border-zinc-800 p-8 rounded-3xl backdrop-blur-xl"
+        >
+          <div className="text-center mb-8">
+            <div className="w-16 h-16 bg-amber-500/10 border border-amber-500/20 rounded-2xl flex items-center justify-center mx-auto mb-4">
+              <Globe className="w-8 h-8 text-amber-500" />
+            </div>
+            <h1 className="text-2xl font-serif italic text-zinc-100">IP não reconhecido</h1>
+            <p className="text-zinc-500 text-sm mt-2">
+              Detectamos um acesso de um novo local. Por favor, insira seu código de acesso para confirmar sua identidade.
+            </p>
+          </div>
+
+          <form onSubmit={handleVerifyCode} className="space-y-4">
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-zinc-500 uppercase tracking-widest ml-1">Código de Acesso</label>
+              <div className="relative">
+                <Key className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-600" />
+                <input 
+                  type="text"
+                  required
+                  value={accessCode}
+                  onChange={(e) => setAccessCode(e.target.value)}
+                  className="w-full bg-zinc-950 border border-zinc-800 text-zinc-100 pl-12 pr-4 py-3 rounded-xl focus:outline-none focus:ring-1 focus:ring-emerald-500/30 transition-all"
+                  placeholder="Seu código de acesso"
+                />
+              </div>
+            </div>
+
+            <AnimatePresence>
+              {error && (
+                <motion.div 
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: 'auto' }}
+                  exit={{ opacity: 0, height: 0 }}
+                  className="bg-red-500/10 border border-red-500/20 text-red-500 text-xs p-3 rounded-xl"
+                >
+                  {error}
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            <button 
+              type="submit"
+              disabled={loading}
+              className="w-full bg-emerald-600 hover:bg-emerald-500 text-black font-bold py-3 rounded-xl transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+            >
+              {loading ? 'Verificando...' : 'Confirmar Identidade'}
+              <ArrowRight className="w-4 h-4" />
+            </button>
+
+            <button 
+              type="button"
+              onClick={() => auth.signOut()}
+              className="w-full text-zinc-600 hover:text-zinc-400 text-xs transition-colors mt-4"
+            >
+              Cancelar e Sair
+            </button>
+          </form>
         </motion.div>
       </div>
     );
@@ -237,7 +374,7 @@ export function Auth() {
             </div>
           </div>
 
-          {email.toLowerCase() !== 'afizportapau@gmail.com' && (
+          {!isLogin && email.toLowerCase() !== 'afizportapau@gmail.com' && (
             <div className="space-y-2">
               <label className="text-xs font-bold text-zinc-500 uppercase tracking-widest ml-1">Código de Acesso</label>
               <div className="relative">
@@ -248,7 +385,7 @@ export function Auth() {
                   value={accessCode}
                   onChange={(e) => setAccessCode(e.target.value)}
                   className="w-full bg-zinc-950 border border-zinc-800 text-zinc-100 pl-12 pr-4 py-3 rounded-xl focus:outline-none focus:ring-1 focus:ring-emerald-500/30 transition-all"
-                  placeholder={isLogin ? "Seu código de acesso" : "Seu código de 30 dias"}
+                  placeholder="Seu código de 30 dias"
                 />
               </div>
             </div>
