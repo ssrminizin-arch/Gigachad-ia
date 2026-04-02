@@ -81,7 +81,24 @@ export default function App() {
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
   
   const scrollRef = useRef<HTMLDivElement>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const scrollToBottom = (behavior: ScrollBehavior = "smooth") => {
+    messagesEndRef.current?.scrollIntoView({ behavior });
+  };
+
+  useEffect(() => {
+    scrollToBottom(messages.length <= 1 ? "auto" : "smooth");
+  }, [messages, isLoading]);
+
+  useEffect(() => {
+    if (textareaRef.current) {
+      textareaRef.current.style.height = "auto";
+      textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 128)}px`;
+    }
+  }, [input]);
 
   useEffect(() => {
     const fetchIp = async () => {
@@ -151,11 +168,6 @@ export default function App() {
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const chatList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Chat));
       setChats(chatList);
-      
-      // If no active chat and we have chats, pick the first one
-      if (!activeChatId && chatList.length > 0) {
-        // setActiveChatId(chatList[0].id); // Optional: auto-select first chat
-      }
     });
 
     return () => unsubscribe();
@@ -229,12 +241,6 @@ export default function App() {
       return () => unsubscribe();
     }
   }, [userProfile]);
-
-  useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
-  }, [messages]);
 
   const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -598,7 +604,7 @@ export default function App() {
       {/* Chat Area */}
       <main 
         ref={scrollRef}
-        className="flex-1 overflow-y-auto px-4 py-8 sm:px-6 md:px-8 max-w-4xl mx-auto w-full scroll-smooth overscroll-contain"
+        className="flex-1 overflow-y-auto px-4 py-8 sm:px-6 md:px-8 max-w-4xl mx-auto w-full overscroll-contain"
       >
         <AnimatePresence mode="wait">
           {isAdminMode ? (
@@ -647,8 +653,10 @@ export default function App() {
             </motion.div>
           ) : messages.length === 0 ? (
             <motion.div 
+              key="empty-state"
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
               className="min-h-full flex flex-col items-center justify-center text-center space-y-6 px-4 py-12"
             >
               <div className="w-16 h-16 rounded-2xl bg-zinc-900 border border-zinc-800 flex items-center justify-center mb-2 text-3xl">
@@ -668,16 +676,18 @@ export default function App() {
               )}
             </motion.div>
           ) : (
-            messages.map((msg, idx) => (
-              <ChatMessage 
-                key={idx} 
-                role={msg.role} 
-                content={msg.content} 
-                imageData={msg.imageData}
-                errorDetails={msg.errorDetails}
-                theme={theme}
-              />
-            ))
+            <div key="message-list" className="space-y-2">
+              {messages.map((msg, idx) => (
+                <ChatMessage 
+                  key={msg.id || idx} 
+                  role={msg.role} 
+                  content={msg.content} 
+                  imageData={msg.imageData}
+                  errorDetails={msg.errorDetails}
+                  theme={theme}
+                />
+              ))}
+            </div>
           )}
         </AnimatePresence>
         {isLoading && (
@@ -698,6 +708,7 @@ export default function App() {
             </div>
           </div>
         )}
+        <div ref={messagesEndRef} className="h-4" />
       </main>
 
       {/* Input Area */}
@@ -755,6 +766,7 @@ export default function App() {
             
             <div className="relative flex-1 flex items-center group">
               <textarea
+                ref={textareaRef}
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) => {
@@ -765,7 +777,7 @@ export default function App() {
                 }}
                 placeholder="Fale o que quiser..."
                 className={cn(
-                  "w-full px-7 py-4 pr-16 rounded-3xl focus:outline-none transition-all text-sm backdrop-blur-2xl shadow-[0_10px_30px_rgba(0,0,0,0.4)] resize-none min-h-[60px] max-h-32 flex items-center",
+                  "w-full px-7 py-4 pr-16 rounded-3xl focus:outline-none transition-all text-sm backdrop-blur-2xl shadow-[0_10px_30px_rgba(0,0,0,0.4)] resize-none min-h-[60px] max-h-32 flex items-center overflow-y-auto",
                   currentTheme.input,
                   theme === 'red-white' ? "focus:ring-1 focus:ring-red-500/20 focus:border-red-500/30 placeholder:text-red-200" : "focus:ring-1 focus:ring-emerald-500/20 focus:border-emerald-500/30 placeholder:text-zinc-700"
                 )}
