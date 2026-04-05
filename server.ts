@@ -1,19 +1,27 @@
 import express from "express";
-import { createServer as createViteServer } from "vite";
 import path from "path";
 import { fileURLToPath } from "url";
 import admin from "firebase-admin";
 import fs from "fs";
-import nodemailer from "nodemailer";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Initialize Firebase Admin
-const firebaseConfigPath = path.join(__dirname, "firebase-applet-config.json");
-const firebaseConfig = JSON.parse(fs.readFileSync(firebaseConfigPath, "utf-8"));
+const firebaseConfigPath = path.join(process.cwd(), "firebase-applet-config.json");
+let firebaseConfig: any;
+try {
+  firebaseConfig = JSON.parse(fs.readFileSync(firebaseConfigPath, "utf-8"));
+} catch (err) {
+  console.error("Failed to load firebase-applet-config.json:", err);
+  // Fallback to env vars if possible, or empty object
+  firebaseConfig = {
+    projectId: process.env.FIREBASE_PROJECT_ID,
+    firestoreDatabaseId: process.env.FIREBASE_DATABASE_ID || '(default)'
+  };
+}
 
-if (!admin.apps.length) {
+if (firebaseConfig.projectId && !admin.apps.length) {
   admin.initializeApp({
     projectId: firebaseConfig.projectId,
   });
@@ -31,6 +39,19 @@ const dbPath = isVercel ? "/tmp/logs.db" : "logs.db";
 let db: any;
 
 async function initDb() {
+  if (isVercel) {
+    console.log("[DATABASE] Running on Vercel, disabling SQLite to prevent crashes.");
+    db = {
+      prepare: () => ({
+        run: () => ({}),
+        get: () => undefined,
+        all: () => []
+      }),
+      exec: () => ({})
+    };
+    return;
+  }
+
   try {
     const { default: Database } = await import("better-sqlite3");
     db = new Database(dbPath);
@@ -74,77 +95,6 @@ async function initDb() {
 
 // Geolocation Cache
 const geoCache = new Map<string, { city: string, region: string }>();
-
-// Email Transporter (Lazy Initialization)
-let transporter: any = null;
-
-function getTransporter() {
-  if (!transporter) {
-    const { SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS } = process.env;
-    if (!SMTP_HOST || !SMTP_PORT || !SMTP_USER || !SMTP_PASS) {
-      console.warn("[EMAIL] SMTP configuration missing. Email sending disabled.");
-      return null;
-    }
-    transporter = nodemailer.createTransport({
-      host: SMTP_HOST,
-      port: parseInt(SMTP_PORT || "587"),
-      secure: parseInt(SMTP_PORT || "587") === 465,
-      auth: {
-        user: SMTP_USER,
-        pass: SMTP_PASS.replace(/\s+/g, ""),
-      },
-    });
-  }
-  return transporter;
-}
-
-async function sendAccessCodeEmail(to: string, code: string) {
-  const t = getTransporter();
-  if (!t) return;
-
-  const mailOptions = {
-    from: process.env.SMTP_FROM || `"GigaChad IA" <${process.env.SMTP_USER}>`,
-    to,
-    subject: "Seu Acesso ao GigaChad IA Chegou! 🗿",
-    html: `
-      <div style="background-color: #09090b; color: #f4f4f5; font-family: sans-serif; padding: 40px; max-width: 600px; margin: 0 auto; border-radius: 24px; border: 1px solid #27272a;">
-        <div style="text-align: center; margin-bottom: 30px;">
-          <div style="font-size: 48px; margin-bottom: 10px;">🗿</div>
-          <h1 style="color: #ffffff; font-size: 24px; font-weight: 800; text-transform: uppercase; letter-spacing: 2px; font-style: italic; margin: 0;">GigaChad IA</h1>
-          <p style="color: #71717a; font-size: 10px; text-transform: uppercase; letter-spacing: 4px; margin-top: 5px;">Onde os fracos não têm vez</p>
-        </div>
-
-        <div style="background-color: #18181b; padding: 30px; border-radius: 16px; border: 1px solid #3f3f46; text-align: center;">
-          <p style="color: #a1a1aa; font-size: 16px; margin-bottom: 20px;">Seu pagamento foi confirmado. Aqui está sua chave de acesso de 30 dias:</p>
-          
-          <div style="background-color: #000000; color: #10b981; font-family: monospace; font-size: 32px; font-weight: bold; padding: 20px; border-radius: 12px; border: 1px solid #10b981; margin-bottom: 20px; letter-spacing: 4px;">
-            ${code}
-          </div>
-
-          <p style="color: #ef4444; font-size: 14px; font-weight: bold; margin-bottom: 20px;">
-            ⚠️ IMPORTANTE: Use este código com a conta do e-mail que você realizou a compra (${to}).
-          </p>
-
-          <a href="https://gigachad-ia-tot8.vercel.app" style="display: inline-block; background-color: #10b981; color: #000000; text-decoration: none; font-weight: 800; padding: 16px 32px; border-radius: 12px; text-transform: uppercase; letter-spacing: 1px;">
-            Acessar GigaChad IA
-          </a>
-        </div>
-
-        <div style="margin-top: 30px; text-align: center; color: #52525b; font-size: 12px;">
-          <p>Se tiver qualquer dúvida, responda a este e-mail.</p>
-          <p style="margin-top: 10px;">© 2026 GigaChad IA. Todos os direitos reservados.</p>
-        </div>
-      </div>
-    `,
-  };
-
-  try {
-    await t.sendMail(mailOptions);
-    console.log(`[EMAIL] Código enviado com sucesso para ${to}`);
-  } catch (err) {
-    console.error(`[EMAIL] Erro ao enviar e-mail para ${to}:`, err);
-  }
-}
 
 async function getGeoLocation(ip: string) {
   // Clean IP (remove IPv6 prefix if present)
@@ -306,7 +256,7 @@ async function startServer() {
         console.log(`[KIWIFY] Cliente ${customerEmail} já possui o código ${existingCode.code}. Reenviando.`);
         
         // Reenviar e-mail em caso de duplicidade
-        sendAccessCodeEmail(customerEmail, existingCode.code);
+        // sendAccessCodeEmail(customerEmail, existingCode.code);
 
         return res.status(200).json({ 
           success: true, 
@@ -353,7 +303,7 @@ async function startServer() {
       }
 
       // 4. Enviar e-mail profissional
-      sendAccessCodeEmail(customerEmail, codeToDeliver);
+      // sendAccessCodeEmail(customerEmail, codeToDeliver);
 
       res.status(200).json({ 
         success: true, 
@@ -370,8 +320,9 @@ async function startServer() {
   app.route(["/api/admin/logs", "/api/admin/logs/"])
     .post((req, res) => {
       const { password } = req.body;
+      const adminPassword = process.env.ADMIN_PASSWORD || "2011";
       
-      if (password !== "2011") {
+      if (password !== adminPassword) {
         return res.status(401).json({ error: "Unauthorized" });
       }
 
@@ -402,7 +353,8 @@ async function startServer() {
   app.route(["/api/admin/blacklist", "/api/admin/blacklist/"])
     .post((req, res) => {
       const { password, ip, reason } = req.body;
-      if (password !== "2011") return res.status(401).json({ error: "Unauthorized" });
+      const adminPassword = process.env.ADMIN_PASSWORD || "2011";
+      if (password !== adminPassword) return res.status(401).json({ error: "Unauthorized" });
 
       try {
         db.prepare("INSERT OR REPLACE INTO blacklist (ip, reason) VALUES (?, ?)").run(ip, reason);
@@ -413,7 +365,8 @@ async function startServer() {
     })
     .delete((req, res) => {
       const { password, ip } = req.body;
-      if (password !== "2011") return res.status(401).json({ error: "Unauthorized" });
+      const adminPassword = process.env.ADMIN_PASSWORD || "2011";
+      if (password !== adminPassword) return res.status(401).json({ error: "Unauthorized" });
 
       try {
         db.prepare("DELETE FROM blacklist WHERE ip = ?").run(ip);
@@ -426,22 +379,9 @@ async function startServer() {
       res.status(405).json({ error: `Method ${req.method} not allowed. Use POST or DELETE.` });
     });
 
-  // Temporary Test Email Route
-  app.get("/api/test-email-now", async (req, res) => {
-    const testEmail = "ssrminizin@gmail.com";
-    const testCode = "GIGACHAD-TEST-123";
-    
-    console.log(`[TEST] Enviando e-mail de teste para ${testEmail}`);
-    try {
-      await sendAccessCodeEmail(testEmail, testCode);
-      res.json({ success: true, message: `E-mail de teste enviado para ${testEmail}` });
-    } catch (err) {
-      res.status(500).json({ success: false, error: "Erro ao enviar e-mail de teste" });
-    }
-  });
-
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production" && !isVercel) {
+    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
@@ -449,14 +389,24 @@ async function startServer() {
     app.use(vite.middlewares);
   } else {
     // Serve static files in production
-    const distPath = path.join(__dirname, "dist");
+    const distPath = path.join(process.cwd(), "dist");
     if (fs.existsSync(distPath)) {
       app.use(express.static(distPath));
       app.get("*", (req, res) => {
         res.sendFile(path.join(distPath, "index.html"));
       });
+    } else {
+      console.warn(`[SERVER] Dist path not found: ${distPath}`);
+      app.get("*", (req, res) => {
+        res.status(404).send("Application not built. Please run 'npm run build' first.");
+      });
     }
   }
+
+  // Health check
+  app.get("/api/health", (req, res) => {
+    res.json({ status: "ok", isVercel, timestamp: new Date().toISOString() });
+  });
 
   if (!isVercel) {
     app.listen(PORT, "0.0.0.0", () => {
