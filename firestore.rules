@@ -31,9 +31,8 @@ service cloud.firestore {
     
     function isAdmin() {
       return isAuthenticated() && 
-        ((request.auth.token.email == "afizportapau@gmail.com" && request.auth.token.email_verified == true) ||
-         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
-          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'));
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+         (request.auth.token.email == "afizportapau@gmail.com" && request.auth.token.email_verified == true));
     }
 
     function hasOnlyAllowedFields(fields) {
@@ -41,9 +40,10 @@ service cloud.firestore {
     }
 
     function isValidUser(data) {
-      return hasOnlyAllowedFields(['uid', 'email', 'role', 'createdAt', 'lastIp', 'accessExpiresAt']) &&
+      return hasOnlyAllowedFields(['uid', 'email', 'role', 'createdAt', 'lastIp', 'accessExpiresAt', 'registeredWithCode']) &&
              data.uid == request.auth.uid &&
-             data.role in ['admin', 'user'];
+             data.role in ['admin', 'user'] &&
+             data.email is string && data.email.size() < 100;
     }
 
     function isValidChat(data) {
@@ -55,7 +55,8 @@ service cloud.firestore {
     function isValidMessage(data) {
       return hasOnlyAllowedFields(['role', 'content', 'imageData', 'createdAt']) &&
              data.role in ['user', 'model'] &&
-             data.content is string && data.content.size() <= 10000;
+             data.content is string && data.content.size() <= 20000 &&
+             (data.imageData == null || (data.imageData is string && data.imageData.size() < 1000000));
     }
 
     // Users Collection
@@ -70,12 +71,13 @@ service cloud.firestore {
       allow get: if true; 
       allow list: if isAdmin();
       allow create, delete: if isAdmin();
-      allow update: if isAdmin() || 
-        (isAuthenticated() && 
-         !resource.data.used && 
-         request.resource.data.used == true && 
-         request.resource.data.usedBy == request.auth.uid &&
-         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['used', 'usedBy']));
+      allow update: if isAdmin() || (
+        isAuthenticated() && 
+        !resource.data.used && 
+        request.resource.data.used == true && 
+        request.resource.data.usedBy == request.auth.uid &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['used', 'usedBy'])
+      );
     }
 
     // Chats Collection
@@ -86,13 +88,8 @@ service cloud.firestore {
 
       // Messages Subcollection
       match /messages/{messageId} {
-        allow read: if isAuthenticated() && 
-          exists(/databases/$(database)/documents/chats/$(chatId)) &&
-          get(/databases/$(database)/documents/chats/$(chatId)).data.userId == request.auth.uid;
-        allow create: if isAuthenticated() && 
-          exists(/databases/$(database)/documents/chats/$(chatId)) &&
-          get(/databases/$(database)/documents/chats/$(chatId)).data.userId == request.auth.uid && 
-          isValidMessage(request.resource.data);
+        allow read: if isAuthenticated() && get(/databases/$(database)/documents/chats/$(chatId)).data.userId == request.auth.uid;
+        allow create: if isAuthenticated() && get(/databases/$(database)/documents/chats/$(chatId)).data.userId == request.auth.uid && isValidMessage(request.resource.data);
       }
     }
   }
