@@ -3,9 +3,26 @@ import { createServer as createViteServer } from "vite";
 import path from "path";
 import { fileURLToPath } from "url";
 import Database from "better-sqlite3";
+import admin from "firebase-admin";
+import fs from "fs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// Initialize Firebase Admin
+const firebaseConfigPath = path.join(__dirname, "firebase-applet-config.json");
+const firebaseConfig = JSON.parse(fs.readFileSync(firebaseConfigPath, "utf-8"));
+
+if (!admin.apps.length) {
+  admin.initializeApp({
+    projectId: firebaseConfig.projectId,
+  });
+}
+const firestore = admin.firestore();
+if (firebaseConfig.firestoreDatabaseId && firebaseConfig.firestoreDatabaseId !== '(default)') {
+  // @ts-ignore - databaseId is available in newer versions of firebase-admin
+  firestore.settings({ databaseId: firebaseConfig.firestoreDatabaseId });
+}
 
 // Initialize Database
 const db = new Database("logs.db");
@@ -163,6 +180,53 @@ async function startServer() {
   // API routes
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok", message: "GigaChad Server is running" });
+  });
+
+  // Kiwify Webhook Endpoint
+  app.post("/api/kiwify-webhook", async (req, res) => {
+    const { order_status, customer } = req.body;
+
+    console.log(`[KIWIFY] Webhook recebido: ${order_status} para ${customer?.email}`);
+
+    if (order_status !== "paid") {
+      return res.status(200).send("OK");
+    }
+
+    try {
+      console.log(`[KIWIFY] Pagamento APROVADO. Buscando código para ${customer?.email}`);
+      
+      // 1. Buscar um código disponível (não usado)
+      const querySnapshot = await firestore.collection("accessCodes")
+        .where("used", "==", false)
+        .limit(1)
+        .get();
+
+      if (querySnapshot.empty) {
+        console.error("[KIWIFY] NENHUM CÓDIGO DISPONÍVEL NO ESTOQUE!");
+        return res.status(200).json({ success: false, message: "Sem estoque de códigos" });
+      }
+
+      const codeDoc = querySnapshot.docs[0];
+      const codeData = codeDoc.data();
+
+      // 2. Marcar como usado e associar ao e-mail do comprador
+      await codeDoc.ref.update({
+        used: true,
+        usedBy: customer.email,
+        usedAt: admin.firestore.FieldValue.serverTimestamp()
+      });
+
+      console.log(`[KIWIFY] Código ${codeData.code} entregue para ${customer.email}`);
+      
+      res.status(200).json({ 
+        success: true, 
+        message: "Código entregue", 
+        code: codeData.code 
+      });
+    } catch (error) {
+      console.error("[KIWIFY] Erro ao processar webhook:", error);
+      res.status(500).json({ error: "Erro interno" });
+    }
   });
 
   // Admin Logs Route

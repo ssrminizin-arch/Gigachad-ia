@@ -31,8 +31,9 @@ service cloud.firestore {
     
     function isAdmin() {
       return isAuthenticated() && 
-        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
-         (request.auth.token.email == "afizportapau@gmail.com" && request.auth.token.email_verified == true));
+        ((request.auth.token.email == "afizportapau@gmail.com" && request.auth.token.email_verified == true) ||
+         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'));
     }
 
     function hasOnlyAllowedFields(fields) {
@@ -68,7 +69,13 @@ service cloud.firestore {
     match /accessCodes/{code} {
       allow get: if true; 
       allow list: if isAdmin();
-      allow create, update, delete: if isAdmin();
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin() || 
+        (isAuthenticated() && 
+         !resource.data.used && 
+         request.resource.data.used == true && 
+         request.resource.data.usedBy == request.auth.uid &&
+         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['used', 'usedBy']));
     }
 
     // Chats Collection
@@ -79,8 +86,13 @@ service cloud.firestore {
 
       // Messages Subcollection
       match /messages/{messageId} {
-        allow read: if isAuthenticated() && get(/databases/$(database)/documents/chats/$(chatId)).data.userId == request.auth.uid;
-        allow create: if isAuthenticated() && get(/databases/$(database)/documents/chats/$(chatId)).data.userId == request.auth.uid && isValidMessage(request.resource.data);
+        allow read: if isAuthenticated() && 
+          exists(/databases/$(database)/documents/chats/$(chatId)) &&
+          get(/databases/$(database)/documents/chats/$(chatId)).data.userId == request.auth.uid;
+        allow create: if isAuthenticated() && 
+          exists(/databases/$(database)/documents/chats/$(chatId)) &&
+          get(/databases/$(database)/documents/chats/$(chatId)).data.userId == request.auth.uid && 
+          isValidMessage(request.resource.data);
       }
     }
   }

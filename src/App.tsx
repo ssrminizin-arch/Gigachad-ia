@@ -5,11 +5,12 @@ import { ChatMessage } from "./components/ChatMessage";
 import { geminiService } from "./services/gemini";
 import { auth, db } from "./firebase";
 import { onAuthStateChanged, signOut } from "firebase/auth";
-import { doc, getDoc, collection, query, where, onSnapshot, setDoc, addDoc, serverTimestamp, orderBy, limit, deleteDoc } from "firebase/firestore";
+import { doc, getDoc, collection, query, where, onSnapshot, setDoc, addDoc, serverTimestamp, orderBy, limit, deleteDoc, updateDoc } from "firebase/firestore";
 import { Auth } from "./components/Auth";
 import { UserProfile, AccessCode, Chat, Message as MessageType } from "./types";
 import { addDays, isAfter } from "date-fns";
 import { cn } from "./lib/utils";
+import { handleFirestoreError, OperationType } from "./lib/firestore-errors";
 
 interface Message {
   id?: string;
@@ -81,24 +82,7 @@ export default function App() {
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
   
   const scrollRef = useRef<HTMLDivElement>(null);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-
-  const scrollToBottom = (behavior: ScrollBehavior = "smooth") => {
-    messagesEndRef.current?.scrollIntoView({ behavior });
-  };
-
-  useEffect(() => {
-    scrollToBottom(messages.length <= 1 ? "auto" : "smooth");
-  }, [messages, isLoading]);
-
-  useEffect(() => {
-    if (textareaRef.current) {
-      textareaRef.current.style.height = "auto";
-      textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 128)}px`;
-    }
-  }, [input]);
 
   useEffect(() => {
     const fetchIp = async () => {
@@ -123,6 +107,7 @@ export default function App() {
       }
 
       if (firebaseUser) {
+        const path = `users/${firebaseUser.uid}`;
         profileUnsubscribe = onSnapshot(doc(db, "users", firebaseUser.uid), (doc) => {
           if (doc.exists()) {
             const profileData = doc.data() as UserProfile;
@@ -135,7 +120,7 @@ export default function App() {
           }
           setIsAuthReady(true);
         }, (error) => {
-          console.error("Profile listener error:", error);
+          handleFirestoreError(error, OperationType.GET, path);
           setIsAuthReady(true);
         });
       } else {
@@ -165,9 +150,17 @@ export default function App() {
       orderBy("lastMessageAt", "desc")
     );
 
+    const path = "chats";
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const chatList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Chat));
       setChats(chatList);
+      
+      // If no active chat and we have chats, pick the first one
+      if (!activeChatId && chatList.length > 0) {
+        // setActiveChatId(chatList[0].id); // Optional: auto-select first chat
+      }
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, path);
     });
 
     return () => unsubscribe();
@@ -189,9 +182,12 @@ export default function App() {
       orderBy("createdAt", "asc")
     );
 
+    const path = `chats/${activeChatId}/messages`;
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const msgList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Message));
       setMessages(msgList);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, path);
     });
 
     return () => unsubscribe();
@@ -234,13 +230,22 @@ export default function App() {
   useEffect(() => {
     if (userProfile?.role === 'admin') {
       const q = query(collection(db, "accessCodes"), where("used", "==", false));
+      const path = "accessCodes";
       const unsubscribe = onSnapshot(q, (snapshot) => {
         const codes = snapshot.docs.map(doc => doc.data() as AccessCode);
         setAccessCodes(codes);
+      }, (error) => {
+        handleFirestoreError(error, OperationType.LIST, path);
       });
       return () => unsubscribe();
     }
   }, [userProfile]);
+
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [messages]);
 
   const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -264,12 +269,17 @@ export default function App() {
         const createdAt = new Date().toISOString();
         const expiresAt = addDays(new Date(), 30).toISOString();
         
-        await setDoc(doc(db, "accessCodes", code), {
-          code,
-          createdAt,
-          expiresAt,
-          used: false
-        });
+        const path = `accessCodes/${code}`;
+        try {
+          await setDoc(doc(db, "accessCodes", code), {
+            code,
+            createdAt,
+            expiresAt,
+            used: false
+          });
+        } catch (error) {
+          handleFirestoreError(error, OperationType.WRITE, path);
+        }
         newCodes.push(code);
       }
       
@@ -296,13 +306,14 @@ export default function App() {
   const deleteChat = async (chatId: string, e: React.MouseEvent) => {
     e.stopPropagation();
     
+    const path = `chats/${chatId}`;
     try {
       await deleteDoc(doc(db, "chats", chatId));
       if (activeChatId === chatId) {
         createNewChat();
       }
     } catch (error) {
-      console.error("Erro ao excluir chat:", error);
+      handleFirestoreError(error, OperationType.DELETE, path);
     }
   };
 
@@ -316,6 +327,7 @@ export default function App() {
 
     // Create new chat if none active
     if (!currentChatId && !userMessage.startsWith("/")) {
+      const path = "chats";
       try {
         const title = userMessage.length > 30 ? userMessage.substring(0, 30) + "..." : userMessage;
         const chatDoc = await addDoc(collection(db, "chats"), {
@@ -327,7 +339,7 @@ export default function App() {
         currentChatId = chatDoc.id;
         setActiveChatId(currentChatId);
       } catch (error) {
-        console.error("Erro ao criar chat:", error);
+        handleFirestoreError(error, OperationType.CREATE, path);
         return;
       }
     }
@@ -355,6 +367,7 @@ export default function App() {
     
     // Save User Message to Firestore
     if (!retryMessage && currentChatId) {
+      const path = `chats/${currentChatId}/messages`;
       try {
         await addDoc(collection(db, "chats", currentChatId, "messages"), {
           role: "user",
@@ -367,7 +380,7 @@ export default function App() {
           lastMessageAt: serverTimestamp()
         }, { merge: true });
       } catch (error) {
-        console.error("Erro ao salvar mensagem:", error);
+        handleFirestoreError(error, OperationType.WRITE, path);
       }
     }
     
@@ -424,16 +437,21 @@ export default function App() {
       
       // Save Model Message to Firestore
       if (currentChatId) {
-        await addDoc(collection(db, "chats", currentChatId, "messages"), {
-          role: "model",
-          content: assistantContent,
-          imageData: assistantImage || null,
-          createdAt: serverTimestamp()
-        });
-        
-        await setDoc(doc(db, "chats", currentChatId), {
-          lastMessageAt: serverTimestamp()
-        }, { merge: true });
+        const path = `chats/${currentChatId}/messages`;
+        try {
+          await addDoc(collection(db, "chats", currentChatId, "messages"), {
+            role: "model",
+            content: assistantContent,
+            imageData: assistantImage || null,
+            createdAt: serverTimestamp()
+          });
+          
+          await setDoc(doc(db, "chats", currentChatId), {
+            lastMessageAt: serverTimestamp()
+          }, { merge: true });
+        } catch (error) {
+          handleFirestoreError(error, OperationType.WRITE, path);
+        }
       }
 
     } catch (error: any) {
@@ -604,7 +622,7 @@ export default function App() {
       {/* Chat Area */}
       <main 
         ref={scrollRef}
-        className="flex-1 overflow-y-auto px-4 py-8 sm:px-6 md:px-8 max-w-4xl mx-auto w-full overscroll-contain"
+        className="flex-1 overflow-y-auto px-4 py-8 sm:px-6 md:px-8 max-w-4xl mx-auto w-full scroll-smooth overscroll-contain"
       >
         <AnimatePresence mode="wait">
           {isAdminMode ? (
@@ -653,10 +671,8 @@ export default function App() {
             </motion.div>
           ) : messages.length === 0 ? (
             <motion.div 
-              key="empty-state"
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -20 }}
               className="min-h-full flex flex-col items-center justify-center text-center space-y-6 px-4 py-12"
             >
               <div className="w-16 h-16 rounded-2xl bg-zinc-900 border border-zinc-800 flex items-center justify-center mb-2 text-3xl">
@@ -676,18 +692,16 @@ export default function App() {
               )}
             </motion.div>
           ) : (
-            <div key="message-list" className="space-y-2">
-              {messages.map((msg, idx) => (
-                <ChatMessage 
-                  key={msg.id || idx} 
-                  role={msg.role} 
-                  content={msg.content} 
-                  imageData={msg.imageData}
-                  errorDetails={msg.errorDetails}
-                  theme={theme}
-                />
-              ))}
-            </div>
+            messages.map((msg, idx) => (
+              <ChatMessage 
+                key={idx} 
+                role={msg.role} 
+                content={msg.content} 
+                imageData={msg.imageData}
+                errorDetails={msg.errorDetails}
+                theme={theme}
+              />
+            ))
           )}
         </AnimatePresence>
         {isLoading && (
@@ -708,7 +722,6 @@ export default function App() {
             </div>
           </div>
         )}
-        <div ref={messagesEndRef} className="h-4" />
       </main>
 
       {/* Input Area */}
@@ -766,7 +779,6 @@ export default function App() {
             
             <div className="relative flex-1 flex items-center group">
               <textarea
-                ref={textareaRef}
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) => {
@@ -777,7 +789,7 @@ export default function App() {
                 }}
                 placeholder="Fale o que quiser..."
                 className={cn(
-                  "w-full px-7 py-4 pr-16 rounded-3xl focus:outline-none transition-all text-sm backdrop-blur-2xl shadow-[0_10px_30px_rgba(0,0,0,0.4)] resize-none min-h-[60px] max-h-32 flex items-center overflow-y-auto",
+                  "w-full px-7 py-4 pr-16 rounded-3xl focus:outline-none transition-all text-sm backdrop-blur-2xl shadow-[0_10px_30px_rgba(0,0,0,0.4)] resize-none min-h-[60px] max-h-32 flex items-center",
                   currentTheme.input,
                   theme === 'red-white' ? "focus:ring-1 focus:ring-red-500/20 focus:border-red-500/30 placeholder:text-red-200" : "focus:ring-1 focus:ring-emerald-500/20 focus:border-emerald-500/30 placeholder:text-zinc-700"
                 )}

@@ -84,12 +84,52 @@ export function Auth({ onVerified }: AuthProps) {
     if (!auth.currentUser) return;
     setResendLoading(true);
     try {
+      await auth.currentUser.reload();
+      if (auth.currentUser.emailVerified) {
+        setNeedsVerification(false);
+        onVerified?.();
+        return;
+      }
       await sendEmailVerification(auth.currentUser);
       alert('E-mail de verificação reenviado!');
     } catch (err: any) {
       setError(err.message);
     } finally {
       setResendLoading(false);
+    }
+  };
+
+  const handleCheckVerification = async () => {
+    if (!auth.currentUser) return;
+    setLoading(true);
+    try {
+      await auth.currentUser.reload();
+      if (auth.currentUser.emailVerified) {
+        setNeedsVerification(false);
+        
+        // Check profile after verification
+        const profileDoc = await getDoc(doc(db, 'users', auth.currentUser.uid));
+        if (!profileDoc.exists()) {
+          // Create missing profile
+          const isOwnerEmail = auth.currentUser.email?.toLowerCase() === 'afizportapau@gmail.com';
+          await setDoc(doc(db, 'users', auth.currentUser.uid), {
+            uid: auth.currentUser.uid,
+            email: auth.currentUser.email,
+            role: isOwnerEmail ? 'admin' : 'user',
+            createdAt: new Date().toISOString(),
+            lastIp: currentIp || undefined,
+            accessExpiresAt: isOwnerEmail ? addDays(new Date(), 3650).toISOString() : addDays(new Date(), 30).toISOString()
+          });
+        }
+        
+        onVerified?.();
+      } else {
+        setError('E-mail ainda não verificado. Verifique sua caixa de entrada.');
+      }
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -153,17 +193,31 @@ export function Auth({ onVerified }: AuthProps) {
     setError(null);
     setLoading(true);
 
+    const cleanEmail = email.trim().toLowerCase();
+
     try {
-      const isOwnerEmail = email.toLowerCase() === 'afizportapau@gmail.com';
+      const isOwnerEmail = cleanEmail === 'afizportapau@gmail.com';
       
       if (isLogin) {
         // Login Logic
-        const userCredential = await signInWithEmailAndPassword(auth, email, password);
+        const userCredential = await signInWithEmailAndPassword(auth, cleanEmail, password);
         const user = userCredential.user;
 
         // Fetch profile to check IP and Expiration
         const profileDoc = await getDoc(doc(db, 'users', user.uid));
-        if (profileDoc.exists()) {
+        
+        if (!profileDoc.exists()) {
+          // Create missing profile if it doesn't exist for some reason
+          await setDoc(doc(db, 'users', user.uid), {
+            uid: user.uid,
+            email: user.email,
+            role: isOwnerEmail ? 'admin' : 'user',
+            createdAt: new Date().toISOString(),
+            lastIp: currentIp || undefined,
+            accessExpiresAt: isOwnerEmail ? addDays(new Date(), 3650).toISOString() : addDays(new Date(), 30).toISOString()
+          });
+          onVerified?.();
+        } else {
           const profileData = profileDoc.data();
           const ipMatches = currentIp && profileData.lastIp && currentIp === profileData.lastIp;
           const accessExpired = profileData.accessExpiresAt && isAfter(new Date(), new Date(profileData.accessExpiresAt));
@@ -212,7 +266,7 @@ export function Auth({ onVerified }: AuthProps) {
           }
         }
 
-        const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+        const userCredential = await createUserWithEmailAndPassword(auth, cleanEmail, password);
         const user = userCredential.user;
 
         await setDoc(doc(db, 'users', user.uid), {
@@ -265,10 +319,11 @@ export function Auth({ onVerified }: AuthProps) {
           
           <div className="space-y-4">
             <button 
-              onClick={() => window.location.reload()}
-              className="w-full bg-zinc-100 hover:bg-white text-black font-bold py-3 rounded-xl transition-all flex items-center justify-center gap-2"
+              onClick={handleCheckVerification}
+              disabled={loading}
+              className="w-full bg-zinc-100 hover:bg-white text-black font-bold py-3 rounded-xl transition-all flex items-center justify-center gap-2 disabled:opacity-50"
             >
-              Já verifiquei meu e-mail
+              {loading ? <RefreshCw className="w-4 h-4 animate-spin" /> : 'Já verifiquei meu e-mail'}
             </button>
             
             <button 
