@@ -26,7 +26,9 @@ if (firebaseConfig.firestoreDatabaseId && firebaseConfig.firestoreDatabaseId !==
 }
 
 // Initialize Database
-const db = new Database("logs.db");
+const isVercel = process.env.VERCEL === "1";
+const dbPath = isVercel ? "/tmp/logs.db" : "logs.db";
+const db = new Database(dbPath);
 db.exec(`
   CREATE TABLE IF NOT EXISTS access_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -186,10 +188,10 @@ async function backfillLogs() {
   }
 }
 
-async function startServer() {
-  const app = express();
-  const PORT = 3000;
+const app = express();
+const PORT = 3000;
 
+async function startServer() {
   // Run backfill on startup
   backfillLogs();
 
@@ -418,7 +420,7 @@ async function startServer() {
   });
 
   // Vite middleware for development
-  if (process.env.NODE_ENV !== "production") {
+  if (process.env.NODE_ENV !== "production" && !isVercel) {
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
@@ -426,18 +428,28 @@ async function startServer() {
     app.use(vite.middlewares);
   } else {
     // Serve static files in production
-    app.use(express.static(path.join(__dirname, "dist")));
-    app.get("*", (req, res) => {
-      res.sendFile(path.join(__dirname, "dist", "index.html"));
-    });
+    const distPath = path.join(__dirname, "dist");
+    if (fs.existsSync(distPath)) {
+      app.use(express.static(distPath));
+      app.get("*", (req, res) => {
+        res.sendFile(path.join(distPath, "index.html"));
+      });
+    }
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://0.0.0.0:${PORT}`);
-  });
+  if (!isVercel) {
+    app.listen(PORT, "0.0.0.0", () => {
+      console.log(`Server running on http://0.0.0.0:${PORT}`);
+    });
+  }
 }
 
-startServer().catch((err) => {
+const serverPromise = startServer().catch((err) => {
   console.error("Failed to start server:", err);
-  process.exit(1);
+  if (!isVercel) process.exit(1);
 });
+
+export default async (req: any, res: any) => {
+  await serverPromise;
+  return app(req, res);
+};
