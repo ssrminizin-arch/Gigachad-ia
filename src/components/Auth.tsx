@@ -4,6 +4,7 @@ import {
   createUserWithEmailAndPassword, 
   signInWithEmailAndPassword,
   sendEmailVerification,
+  sendPasswordResetEmail,
   onAuthStateChanged
 } from 'firebase/auth';
 import { 
@@ -12,7 +13,6 @@ import {
   getDoc, 
   updateDoc
 } from 'firebase/firestore';
-import { motion, AnimatePresence } from 'motion/react';
 import { Mail, Lock, Key, ArrowRight, ShieldCheck, MailCheck, RefreshCw, Globe, AlertCircle } from 'lucide-react';
 import { isAfter, addDays } from 'date-fns';
 
@@ -33,6 +33,7 @@ export function Auth({ onVerified }: AuthProps) {
   const [needsCode, setNeedsCode] = useState(false);
   const [isExpired, setIsExpired] = useState(false);
   const [resendLoading, setResendLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
   const [currentIp, setCurrentIp] = useState<string | null>(null);
 
   useEffect(() => {
@@ -46,43 +47,80 @@ export function Auth({ onVerified }: AuthProps) {
       }
     };
     fetchIp();
+  }, []);
 
+  useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user) {
         if (!user.emailVerified) {
           setNeedsVerification(true);
+          setLoading(false);
         } else {
           setNeedsVerification(false);
-          // Check if IP needs verification even if just re-mounting
-          const profileDoc = await getDoc(doc(db, 'users', user.uid));
-          if (profileDoc.exists()) {
-            const profileData = profileDoc.data();
-            const isOwner = user.email === 'afizportapau@gmail.com';
-            const ipMatches = currentIp && profileData.lastIp && currentIp === profileData.lastIp;
-            const accessExpired = profileData.accessExpiresAt && isAfter(new Date(), new Date(profileData.accessExpiresAt));
-            
-            if (!isOwner) {
-              if (accessExpired) {
-                setIsExpired(true);
-                setNeedsCode(true);
-              } else if (!ipMatches) {
-                setIsExpired(false);
-                setNeedsCode(true);
+          
+          // Check if IP needs verification
+          try {
+            const profileDoc = await getDoc(doc(db, 'users', user.uid));
+            if (profileDoc.exists()) {
+              const profileData = profileDoc.data();
+              const isOwner = user.email?.toLowerCase() === 'afizportapau@gmail.com';
+              
+              if (isOwner) {
+                setNeedsCode(false);
+                onVerified?.();
+              } else {
+                const ipMatches = currentIp && profileData.lastIp && currentIp === profileData.lastIp;
+                const accessExpired = profileData.accessExpiresAt && isAfter(new Date(), new Date(profileData.accessExpiresAt));
+                
+                if (accessExpired) {
+                  setIsExpired(true);
+                  setNeedsCode(true);
+                } else if (currentIp && !ipMatches) {
+                  setIsExpired(false);
+                  setNeedsCode(true);
+                } else if (ipMatches || !currentIp) {
+                  // If IP matches or we can't determine IP, allow entry (don't block if ipify is down)
+                  setNeedsCode(false);
+                  onVerified?.();
+                }
               }
+            } else {
+              // Profile doesn't exist yet (just registered)
+              // The handleSubmit handles creation, but if it's missing, we allow entry to create it
+              onVerified?.();
             }
+          } catch (err) {
+            console.error("Error checking profile:", err);
+            onVerified?.(); // Fallback to allow entry if Firestore fails
           }
+          setLoading(false);
         }
       } else {
         setNeedsVerification(false);
         setNeedsCode(false);
+        setLoading(false);
       }
     });
     return () => unsubscribe();
-  }, [currentIp]);
+  }, [currentIp, onVerified]);
+
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (successMessage || error) {
+      const timer = setTimeout(() => {
+        setSuccessMessage(null);
+        setError(null);
+      }, 8000);
+      return () => clearTimeout(timer);
+    }
+  }, [successMessage, error]);
 
   const handleResendEmail = async () => {
     if (!auth.currentUser) return;
     setResendLoading(true);
+    setSuccessMessage(null);
+    setError(null);
     try {
       await auth.currentUser.reload();
       if (auth.currentUser.emailVerified) {
@@ -91,9 +129,9 @@ export function Auth({ onVerified }: AuthProps) {
         return;
       }
       await sendEmailVerification(auth.currentUser);
-      alert('E-mail de verificação reenviado!');
+      setSuccessMessage('E-mail de verificação reenviado!');
     } catch (err: any) {
-      setError(err.message);
+      setError(translateError(err.message));
     } finally {
       setResendLoading(false);
     }
@@ -102,6 +140,8 @@ export function Auth({ onVerified }: AuthProps) {
   const handleCheckVerification = async () => {
     if (!auth.currentUser) return;
     setLoading(true);
+    setSuccessMessage(null);
+    setError(null);
     try {
       await auth.currentUser.reload();
       if (auth.currentUser.emailVerified) {
@@ -127,7 +167,7 @@ export function Auth({ onVerified }: AuthProps) {
         setError('E-mail ainda não verificado. Verifique sua caixa de entrada.');
       }
     } catch (err: any) {
-      setError(err.message);
+      setError(translateError(err.message));
     } finally {
       setLoading(false);
     }
@@ -136,6 +176,7 @@ export function Auth({ onVerified }: AuthProps) {
   const handleVerifyCode = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    setSuccessMessage(null);
     setLoading(true);
 
     try {
@@ -157,7 +198,13 @@ export function Auth({ onVerified }: AuthProps) {
         const codeData = codeDoc.data();
         if (isAfter(new Date(), new Date(codeData.expiresAt))) throw new Error('Este código expirou.');
         
-        if (codeData.used && codeData.usedBy !== user.uid) {
+        // Check if code is already used by someone else
+        const isUsedByOther = codeData.used && (
+          (codeData.usedBy && codeData.usedBy !== user.uid) || 
+          (codeData.usedByEmail && codeData.usedByEmail !== user.email?.toLowerCase())
+        );
+
+        if (isUsedByOther) {
           throw new Error('Este código pertence a outro usuário.');
         }
 
@@ -169,11 +216,12 @@ export function Auth({ onVerified }: AuthProps) {
           });
         }
 
-        // If it was a fresh code, mark as used
-        if (!codeData.used) {
+        // If it was a fresh code or used by email but not yet by UID, mark as used by this UID
+        if (!codeData.used || !codeData.usedBy) {
           await updateDoc(doc(db, 'accessCodes', accessCode), {
             used: true,
-            usedBy: user.uid
+            usedBy: user.uid,
+            usedByEmail: user.email?.toLowerCase() || codeData.usedByEmail
           });
         }
       }
@@ -182,7 +230,48 @@ export function Auth({ onVerified }: AuthProps) {
       setIsExpired(false);
       onVerified?.();
     } catch (err: any) {
-      setError(err.message || 'Erro ao verificar código.');
+      setError(translateError(err.message || 'Erro ao verificar código.'));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const translateError = (message: string) => {
+    const msg = message.toLowerCase();
+    if (msg.includes('auth/user-not-found') || msg.includes('auth/invalid-credential') || msg.includes('auth/wrong-password')) {
+      return 'E-mail ou senha incorretos. Verifique e tente novamente.';
+    }
+    if (msg.includes('auth/invalid-email')) {
+      return 'Formato de e-mail inválido.';
+    }
+    if (msg.includes('auth/email-already-in-use')) {
+      return 'Este e-mail já está em uso.';
+    }
+    if (msg.includes('auth/weak-password')) {
+      return 'A senha deve ter pelo menos 6 caracteres.';
+    }
+    if (msg.includes('auth/too-many-requests')) {
+      return 'Muitas tentativas. Tente novamente mais tarde.';
+    }
+    if (msg.includes('network-request-failed')) {
+      return 'Erro de conexão. Verifique sua internet.';
+    }
+    return 'Ocorreu um erro ao tentar entrar. Tente novamente.';
+  };
+
+  const handleForgotPassword = async () => {
+    if (!email) {
+      setError('Por favor, insira seu e-mail para recuperar a senha.');
+      return;
+    }
+    setLoading(true);
+    setSuccessMessage(null);
+    setError(null);
+    try {
+      await sendPasswordResetEmail(auth, email.trim().toLowerCase());
+      setSuccessMessage('E-mail de recuperação enviado! Verifique sua caixa de entrada.');
+    } catch (err: any) {
+      setError(translateError(err.message));
     } finally {
       setLoading(false);
     }
@@ -191,67 +280,24 @@ export function Auth({ onVerified }: AuthProps) {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    
+    const cleanEmail = email.trim().toLowerCase();
+    
+    if (!cleanEmail.includes('@') || !cleanEmail.includes('.')) {
+      setError('Por favor, insira um e-mail válido.');
+      return;
+    }
+
     setLoading(true);
 
-    const cleanEmail = email.trim().toLowerCase();
-
     try {
-      const isOwnerEmail = cleanEmail === 'afizportapau@gmail.com';
-      
       if (isLogin) {
-        // Login Logic
-        const userCredential = await signInWithEmailAndPassword(auth, cleanEmail, password);
-        const user = userCredential.user;
-
-        // Fetch profile to check IP and Expiration
-        const profileDoc = await getDoc(doc(db, 'users', user.uid));
-        
-        if (!profileDoc.exists()) {
-          // Create missing profile if it doesn't exist for some reason
-          await setDoc(doc(db, 'users', user.uid), {
-            uid: user.uid,
-            email: user.email,
-            role: isOwnerEmail ? 'admin' : 'user',
-            createdAt: new Date().toISOString(),
-            lastIp: currentIp || undefined,
-            accessExpiresAt: isOwnerEmail ? addDays(new Date(), 3650).toISOString() : addDays(new Date(), 30).toISOString()
-          });
-          onVerified?.();
-        } else {
-          const profileData = profileDoc.data();
-          const ipMatches = currentIp && profileData.lastIp && currentIp === profileData.lastIp;
-          const accessExpired = profileData.accessExpiresAt && isAfter(new Date(), new Date(profileData.accessExpiresAt));
-          
-          if (!isOwnerEmail) {
-            if (accessExpired) {
-              setIsExpired(true);
-              setNeedsCode(true);
-            } else if (!ipMatches) {
-              setIsExpired(false);
-              setNeedsCode(true);
-            } else if (currentIp) {
-              // Update last IP if it matches
-              await updateDoc(doc(db, 'users', user.uid), {
-                lastIp: currentIp
-              });
-              onVerified?.();
-            }
-          } else if (currentIp) {
-            // Update last IP for owner
-            await updateDoc(doc(db, 'users', user.uid), {
-              lastIp: currentIp
-            });
-            onVerified?.();
-          }
-        }
-
-        if (!user.emailVerified) {
-          setNeedsVerification(true);
-        }
+        await signInWithEmailAndPassword(auth, cleanEmail, password);
+        // The onAuthStateChanged listener will handle the rest
       } else {
-        // Sign Up Logic
+        const isOwnerEmail = cleanEmail === 'afizportapau@gmail.com';
         let role: 'admin' | 'user' = isOwnerEmail ? 'admin' : 'user';
-        let accessExpiresAt = addDays(new Date(), 3650).toISOString(); // Default for owner
+        let accessExpiresAt = addDays(new Date(), 3650).toISOString();
 
         if (!isOwnerEmail) {
           if (accessCode === ADMIN_INITIAL_KEY) {
@@ -260,7 +306,13 @@ export function Auth({ onVerified }: AuthProps) {
             const codeDoc = await getDoc(doc(db, 'accessCodes', accessCode));
             if (!codeDoc.exists()) throw new Error('Código de acesso inválido.');
             const codeData = codeDoc.data();
-            if (codeData.used) throw new Error('Este código já foi utilizado.');
+            
+            const isUsedByOther = codeData.used && (
+              (codeData.usedBy) || 
+              (codeData.usedByEmail && codeData.usedByEmail !== cleanEmail)
+            );
+
+            if (isUsedByOther) throw new Error('Este código já foi utilizado por outro usuário.');
             if (isAfter(new Date(), new Date(codeData.expiresAt))) throw new Error('Este código expirou.');
             accessExpiresAt = codeData.expiresAt;
           }
@@ -282,20 +334,17 @@ export function Auth({ onVerified }: AuthProps) {
         if (!isOwnerEmail && accessCode !== ADMIN_INITIAL_KEY) {
           await updateDoc(doc(db, 'accessCodes', accessCode), {
             used: true,
-            usedBy: user.uid
+            usedBy: user.uid,
+            usedByEmail: cleanEmail
           });
         }
 
-        // Send Verification Email
         await sendEmailVerification(user);
         setNeedsVerification(true);
-        onVerified?.();
       }
     } catch (err: any) {
       console.error(err);
-      setError(err.message || 'Ocorreu um erro.');
-      if (isLogin) await auth.signOut();
-    } finally {
+      setError(translateError(err.message || 'Ocorreu um erro.'));
       setLoading(false);
     }
   };
@@ -303,11 +352,7 @@ export function Auth({ onVerified }: AuthProps) {
   if (needsVerification) {
     return (
       <div className="min-h-screen flex items-center justify-center p-4 bg-[#030303]">
-        <motion.div 
-          initial={{ opacity: 0, scale: 0.95 }}
-          animate={{ opacity: 1, scale: 1 }}
-          className="w-full max-w-md bg-zinc-900/50 border border-zinc-800 p-8 rounded-3xl backdrop-blur-xl text-center"
-        >
+        <div className="w-full max-w-md bg-zinc-900/50 border border-zinc-800 p-8 rounded-3xl backdrop-blur-xl text-center">
           <div className="w-16 h-16 bg-blue-500/10 border border-blue-500/20 rounded-2xl flex items-center justify-center mx-auto mb-6">
             <MailCheck className="w-8 h-8 text-blue-500" />
           </div>
@@ -341,7 +386,7 @@ export function Auth({ onVerified }: AuthProps) {
               Sair e tentar outro email
             </button>
           </div>
-        </motion.div>
+        </div>
       </div>
     );
   }
@@ -349,11 +394,7 @@ export function Auth({ onVerified }: AuthProps) {
   if (needsCode) {
     return (
       <div className="min-h-screen flex items-center justify-center p-4 bg-[#030303]">
-        <motion.div 
-          initial={{ opacity: 0, scale: 0.95 }}
-          animate={{ opacity: 1, scale: 1 }}
-          className="w-full max-w-md bg-zinc-900/50 border border-zinc-800 p-8 rounded-3xl backdrop-blur-xl"
-        >
+        <div className="w-full max-w-md bg-zinc-900/50 border border-zinc-800 p-8 rounded-3xl backdrop-blur-xl">
           <div className="text-center mb-8">
             <div className={`w-16 h-16 ${isExpired ? 'bg-red-500/10 border-red-500/20' : 'bg-amber-500/10 border-amber-500/20'} rounded-2xl flex items-center justify-center mx-auto mb-4`}>
               {isExpired ? <AlertCircle className="w-8 h-8 text-red-500" /> : <Globe className="w-8 h-8 text-amber-500" />}
@@ -386,18 +427,17 @@ export function Auth({ onVerified }: AuthProps) {
               </div>
             </div>
 
-            <AnimatePresence>
-              {error && (
-                <motion.div 
-                  initial={{ opacity: 0, height: 0 }}
-                  animate={{ opacity: 1, height: 'auto' }}
-                  exit={{ opacity: 0, height: 0 }}
-                  className="bg-red-500/10 border border-red-500/20 text-red-500 text-xs p-3 rounded-xl"
-                >
-                  {error}
-                </motion.div>
-              )}
-            </AnimatePresence>
+            {error && (
+              <div className="bg-red-500/10 border border-red-500/20 text-red-500 text-xs p-3 rounded-xl">
+                {error}
+              </div>
+            )}
+
+            {successMessage && (
+              <div className="bg-emerald-500/10 border border-emerald-500/20 text-emerald-500 text-xs p-3 rounded-xl">
+                {successMessage}
+              </div>
+            )}
 
             <button 
               type="submit"
@@ -416,18 +456,14 @@ export function Auth({ onVerified }: AuthProps) {
               Cancelar e Sair
             </button>
           </form>
-        </motion.div>
+        </div>
       </div>
     );
   }
 
   return (
     <div className="min-h-screen flex items-center justify-center p-4 bg-[#030303]">
-      <motion.div 
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="w-full max-w-md bg-zinc-900/50 border border-zinc-800 p-8 rounded-3xl backdrop-blur-xl shadow-2xl"
-      >
+      <div className="w-full max-w-md bg-zinc-900/50 border border-zinc-800 p-8 rounded-3xl backdrop-blur-xl shadow-2xl">
         <div className="text-center mb-8">
           <div className="w-16 h-16 bg-emerald-500/10 border border-emerald-500/20 rounded-2xl flex items-center justify-center mx-auto mb-4">
             <ShieldCheck className="w-8 h-8 text-emerald-500" />
@@ -466,13 +502,24 @@ export function Auth({ onVerified }: AuthProps) {
             <div className="relative">
               <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-600" />
               <input 
-                type="password"
+                type={showPassword ? "text" : "password"}
                 required
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="w-full bg-zinc-950 border border-zinc-800 text-zinc-100 pl-12 pr-4 py-3 rounded-xl focus:outline-none focus:ring-1 focus:ring-emerald-500/30 transition-all"
+                className="w-full bg-zinc-950 border border-zinc-800 text-zinc-100 pl-12 pr-12 py-3 rounded-xl focus:outline-none focus:ring-1 focus:ring-emerald-500/30 transition-all"
                 placeholder="••••••••"
               />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                className="absolute right-4 top-1/2 -translate-y-1/2 text-zinc-600 hover:text-zinc-400 p-1"
+              >
+                {showPassword ? (
+                  <span className="text-[10px] font-bold uppercase tracking-tighter">Ocultar</span>
+                ) : (
+                  <span className="text-[10px] font-bold uppercase tracking-tighter">Mostrar</span>
+                )}
+              </button>
             </div>
           </div>
 
@@ -493,18 +540,17 @@ export function Auth({ onVerified }: AuthProps) {
             </div>
           )}
 
-          <AnimatePresence>
-            {error && (
-              <motion.div 
-                initial={{ opacity: 0, height: 0 }}
-                animate={{ opacity: 1, height: 'auto' }}
-                exit={{ opacity: 0, height: 0 }}
-                className="bg-red-500/10 border border-red-500/20 text-red-500 text-xs p-3 rounded-xl"
-              >
-                {error}
-              </motion.div>
-            )}
-          </AnimatePresence>
+          {error && (
+            <div className="bg-red-500/10 border border-red-500/20 text-red-500 text-xs p-3 rounded-xl mb-4">
+              {error}
+            </div>
+          )}
+
+          {successMessage && (
+            <div className="bg-emerald-500/10 border border-emerald-500/20 text-emerald-500 text-xs p-3 rounded-xl mb-4">
+              {successMessage}
+            </div>
+          )}
 
           <button 
             type="submit"
@@ -516,15 +562,24 @@ export function Auth({ onVerified }: AuthProps) {
           </button>
         </form>
 
-        <div className="mt-6 text-center">
-          <button 
-            onClick={() => setIsLogin(!isLogin)}
-            className="text-zinc-500 hover:text-zinc-300 text-xs transition-colors"
-          >
-            {isLogin ? 'Não tem uma conta? Registre-se' : 'Já tem uma conta? Entre'}
-          </button>
-        </div>
-      </motion.div>
+          <div className="mt-6 text-center space-y-4">
+            <button 
+              onClick={() => setIsLogin(!isLogin)}
+              className="block w-full text-zinc-500 hover:text-zinc-300 text-xs transition-colors"
+            >
+              {isLogin ? 'Não tem uma conta? Registre-se' : 'Já tem uma conta? Entre'}
+            </button>
+            
+            {isLogin && (
+              <button 
+                onClick={handleForgotPassword}
+                className="block w-full text-zinc-600 hover:text-zinc-400 text-[10px] uppercase tracking-widest transition-colors"
+              >
+                Esqueceu sua senha?
+              </button>
+            )}
+          </div>
+      </div>
     </div>
   );
 }
