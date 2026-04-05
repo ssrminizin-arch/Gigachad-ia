@@ -2,7 +2,6 @@ import express from "express";
 import { createServer as createViteServer } from "vite";
 import path from "path";
 import { fileURLToPath } from "url";
-import Database from "better-sqlite3";
 import admin from "firebase-admin";
 import fs from "fs";
 import nodemailer from "nodemailer";
@@ -28,30 +27,49 @@ if (firebaseConfig.firestoreDatabaseId && firebaseConfig.firestoreDatabaseId !==
 // Initialize Database
 const isVercel = process.env.VERCEL === "1";
 const dbPath = isVercel ? "/tmp/logs.db" : "logs.db";
-const db = new Database(dbPath);
-db.exec(`
-  CREATE TABLE IF NOT EXISTS access_logs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    ip TEXT,
-    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-    user_agent TEXT
-  )
-`);
 
-db.exec(`
-  CREATE TABLE IF NOT EXISTS blacklist (
-    ip TEXT PRIMARY KEY,
-    reason TEXT,
-    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-  )
-`);
+let db: any;
 
-// Migration: Add city and region columns if they don't exist
-try {
-  db.exec("ALTER TABLE access_logs ADD COLUMN city TEXT");
-  db.exec("ALTER TABLE access_logs ADD COLUMN region TEXT");
-} catch (e) {
-  // Columns likely already exist
+async function initDb() {
+  try {
+    const { default: Database } = await import("better-sqlite3");
+    db = new Database(dbPath);
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS access_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ip TEXT,
+        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+        user_agent TEXT
+      )
+    `);
+
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS blacklist (
+        ip TEXT PRIMARY KEY,
+        reason TEXT,
+        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // Migration: Add city and region columns if they don't exist
+    try {
+      db.exec("ALTER TABLE access_logs ADD COLUMN city TEXT");
+      db.exec("ALTER TABLE access_logs ADD COLUMN region TEXT");
+    } catch (e) {
+      // Columns likely already exist
+    }
+  } catch (err) {
+    console.error("[DATABASE] Failed to initialize SQLite. Logging will be disabled.", err);
+    // Mock db object to prevent crashes
+    db = {
+      prepare: () => ({
+        run: () => ({}),
+        get: () => undefined,
+        all: () => []
+      }),
+      exec: () => ({})
+    };
+  }
 }
 
 // Geolocation Cache
@@ -192,6 +210,9 @@ const app = express();
 const PORT = 3000;
 
 async function startServer() {
+  // Initialize Database
+  await initDb();
+
   // Run backfill on startup
   backfillLogs();
 
