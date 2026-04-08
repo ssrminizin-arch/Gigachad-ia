@@ -49,6 +49,7 @@
         "expiresAt": { "type": "string", "format": "date-time", "description": "When the code expires (30 days after creation)" },
         "used": { "type": "boolean", "description": "Whether the code has been used" },
         "usedBy": { "type": "string", "description": "UID of the user who used the code" },
+        "usedByEmail": { "type": "string", "description": "Email of the customer who bought the code" },
         "isPermanent": { "type": "boolean", "description": "Whether the code is a permanent admin key" }
       },
       "required": ["code", "createdAt", "expiresAt", "used"]

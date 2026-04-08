@@ -3,38 +3,107 @@ import path from "path";
 import { fileURLToPath } from "url";
 import admin from "firebase-admin";
 import fs from "fs";
+import nodemailer from "nodemailer";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Initialize Firebase Admin
 const firebaseConfigPath = path.join(process.cwd(), "firebase-applet-config.json");
-let firebaseConfig: any;
+let firebaseConfig: any = {};
 try {
-  firebaseConfig = JSON.parse(fs.readFileSync(firebaseConfigPath, "utf-8"));
+  if (fs.existsSync(firebaseConfigPath)) {
+    firebaseConfig = JSON.parse(fs.readFileSync(firebaseConfigPath, "utf-8"));
+  }
 } catch (err) {
   console.error("Failed to load firebase-applet-config.json:", err);
-  // Fallback to env vars if possible, or empty object
-  firebaseConfig = {
-    projectId: process.env.FIREBASE_PROJECT_ID,
-    firestoreDatabaseId: process.env.FIREBASE_DATABASE_ID || '(default)'
-  };
 }
 
-if (firebaseConfig.projectId && !admin.apps.length) {
-  admin.initializeApp({
-    projectId: firebaseConfig.projectId,
-  });
-}
-const firestore = admin.firestore();
-if (firebaseConfig.firestoreDatabaseId && firebaseConfig.firestoreDatabaseId !== '(default)') {
-  // @ts-ignore - databaseId is available in newer versions of firebase-admin
-  firestore.settings({ databaseId: firebaseConfig.firestoreDatabaseId });
+// Fallback to env vars if file is missing or incomplete
+const projectId = firebaseConfig.projectId || process.env.FIREBASE_PROJECT_ID;
+const firestoreDatabaseId = firebaseConfig.firestoreDatabaseId || process.env.FIREBASE_DATABASE_ID || '(default)';
+
+let firestore: any = null;
+
+if (projectId) {
+  try {
+    if (!admin.apps.length) {
+      admin.initializeApp({
+        projectId: projectId,
+      });
+    }
+    firestore = admin.firestore();
+    if (firestoreDatabaseId && firestoreDatabaseId !== '(default)') {
+      // @ts-ignore
+      firestore.settings({ databaseId: firestoreDatabaseId });
+    }
+    console.log("[FIREBASE] Admin initialized successfully.");
+  } catch (err) {
+    console.error("[FIREBASE] Error initializing admin:", err);
+  }
+} else {
+  console.warn("[FIREBASE] Project ID missing. Database operations will fail.");
 }
 
-// Initialize Database
+// Initialize Database (SQLite)
 const isVercel = process.env.VERCEL === "1";
 const dbPath = isVercel ? "/tmp/logs.db" : "logs.db";
+
+// Email Transporter Setup
+const transporter = nodemailer.createTransport({
+  host: process.env.SMTP_HOST,
+  port: parseInt(process.env.SMTP_PORT || "465"),
+  secure: process.env.SMTP_PORT === "465", // true for 465, false for other ports
+  auth: {
+    user: process.env.SMTP_USER,
+    pass: process.env.SMTP_PASS,
+  },
+});
+
+async function sendAccessCodeEmail(to: string, code: string) {
+  const siteUrl = "https://gigachad-ia-tot8.vercel.app";
+  
+  const mailOptions = {
+    from: process.env.SMTP_FROM || '"GigaChad IA" <noreply@gigachad.ia>',
+    to,
+    subject: "Seu Código de Acesso - GigaChad IA 🗿",
+    html: `
+      <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #09090b; color: #f4f4f5; padding: 40px; border-radius: 20px; max-width: 600px; margin: auto; border: 1px solid #27272a;">
+        <div style="text-align: center; margin-bottom: 30px;">
+          <h1 style="color: #10b981; font-size: 2.5rem; margin: 0; font-style: italic;">GIGACHAD IA 🗿</h1>
+          <p style="color: #71717a; font-size: 1.1rem;">Acesso Alpha Liberado</p>
+        </div>
+        
+        <div style="background-color: #18181b; padding: 30px; border-radius: 15px; border: 1px solid #27272a; text-align: center;">
+          <p style="font-size: 1.1rem; margin-bottom: 20px;">Olá! Sua compra foi aprovada com sucesso.</p>
+          <p style="color: #71717a; margin-bottom: 10px;">Seu código de acesso exclusivo é:</p>
+          <div style="background-color: #09090b; border: 2px dashed #10b981; padding: 15px; font-size: 2rem; font-weight: bold; letter-spacing: 5px; color: #10b981; margin-bottom: 25px;">
+            ${code}
+          </div>
+          <p style="color: #71717a; font-size: 0.9rem; margin-bottom: 30px;">Este código é válido por 30 dias a partir de hoje.</p>
+          
+          <a href="${siteUrl}" style="background-color: #10b981; color: #000; padding: 15px 30px; border-radius: 10px; text-decoration: none; font-weight: bold; font-size: 1.1rem; display: inline-block;">
+            ACESSAR GIGACHAD IA AGORA
+          </a>
+        </div>
+        
+        <div style="margin-top: 40px; text-align: center; color: #71717a; font-size: 0.8rem;">
+          <p>Se você não realizou esta compra, ignore este e-mail.</p>
+          <p>&copy; 2026 GigaChad IA - Todos os direitos reservados.</p>
+        </div>
+      </div>
+    `,
+  };
+
+  try {
+    const info = await transporter.sendMail(mailOptions);
+    console.log(`[EMAIL] Sucesso: Código enviado para ${to}. MessageId: ${info.messageId}`);
+    return true;
+  } catch (err) {
+    console.error(`[EMAIL] Erro ao enviar para ${to}:`, err);
+    return false;
+  }
+}
 
 let db: any;
 
@@ -256,7 +325,7 @@ async function startServer() {
         console.log(`[KIWIFY] Cliente ${customerEmail} já possui o código ${existingCode.code}. Reenviando.`);
         
         // Reenviar e-mail em caso de duplicidade
-        // sendAccessCodeEmail(customerEmail, existingCode.code);
+        await sendAccessCodeEmail(customerEmail, existingCode.code);
 
         return res.status(200).json({ 
           success: true, 
@@ -303,7 +372,7 @@ async function startServer() {
       }
 
       // 4. Enviar e-mail profissional
-      // sendAccessCodeEmail(customerEmail, codeToDeliver);
+      await sendAccessCodeEmail(customerEmail, codeToDeliver);
 
       res.status(200).json({ 
         success: true, 
@@ -406,6 +475,20 @@ async function startServer() {
   // Health check
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok", isVercel, timestamp: new Date().toISOString() });
+  });
+
+  // Test Email Route (Remove in production if desired)
+  app.post("/api/admin/test-email", async (req, res) => {
+    const { password, email, code } = req.body;
+    const adminPassword = process.env.ADMIN_PASSWORD || "2011";
+    if (password !== adminPassword) return res.status(401).json({ error: "Unauthorized" });
+
+    const success = await sendAccessCodeEmail(email, code || "TEST-123");
+    if (success) {
+      res.json({ success: true, message: "E-mail de teste enviado!" });
+    } else {
+      res.status(500).json({ success: false, message: "Falha ao enviar e-mail." });
+    }
   });
 
   if (!isVercel) {
