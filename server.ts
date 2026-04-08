@@ -177,6 +177,74 @@ async function initDb() {
   }
 }
 
+// Kiwify API Helpers
+let kiwifyAccessToken: string | null = null;
+let kiwifyTokenExpiry: number = 0;
+
+async function getKiwifyAccessToken() {
+  const { KIWIFY_CLIENT_ID, KIWIFY_CLIENT_SECRET } = process.env;
+  if (!KIWIFY_CLIENT_ID || !KIWIFY_CLIENT_SECRET) return null;
+
+  // Check if token is still valid
+  if (kiwifyAccessToken && Date.now() < kiwifyTokenExpiry) return kiwifyAccessToken;
+
+  try {
+    const response = await fetch("https://api.kiwify.com.br/v1/oauth/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "client_credentials",
+        client_id: KIWIFY_CLIENT_ID,
+        client_secret: KIWIFY_CLIENT_SECRET,
+      }),
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      kiwifyAccessToken = data.access_token;
+      kiwifyTokenExpiry = Date.now() + (data.expires_in * 1000) - 60000; // 1 min buffer
+      return kiwifyAccessToken;
+    }
+  } catch (err) {
+    console.error("[KIWIFY API] Auth Error:", err);
+  }
+  return null;
+}
+
+async function processOrderDelivery(email: string, orderId: string) {
+  const customerEmail = email.toLowerCase().trim();
+  
+  // 1. Check if already delivered
+  const existing = await firestore.collection("accessCodes")
+    .where("usedByEmail", "==", customerEmail)
+    .limit(1)
+    .get();
+
+  if (!existing.empty) {
+    const code = existing.docs[0].data().code;
+    await sendAccessCodeEmail(customerEmail, code);
+    return { success: true, message: "Reenviado", code };
+  }
+
+  // 2. Generate new code
+  const code = Math.random().toString(36).substring(2, 10).toUpperCase();
+  const createdAt = new Date().toISOString();
+  const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+
+  await firestore.collection("accessCodes").doc(code).set({
+    code,
+    createdAt,
+    expiresAt,
+    used: true,
+    usedByEmail: customerEmail,
+    usedAt: admin.firestore.FieldValue.serverTimestamp(),
+    orderId: orderId || "api-sync"
+  });
+
+  await sendAccessCodeEmail(customerEmail, code);
+  return { success: true, message: "Entregue", code };
+}
+
 // Geolocation Cache
 const geoCache = new Map<string, { city: string, region: string }>();
 
@@ -311,6 +379,40 @@ async function startServer() {
     res.json({ status: "ok", message: "GigaChad Server is running" });
   });
 
+  // Kiwify API Sync Route
+  app.post("/api/admin/sync-kiwify", async (req, res) => {
+    const { password } = req.body;
+    const adminPassword = process.env.ADMIN_PASSWORD || "2011";
+    if (password !== adminPassword) return res.status(401).json({ error: "Unauthorized" });
+
+    const token = await getKiwifyAccessToken();
+    if (!token) return res.status(500).json({ error: "Falha na autenticação com Kiwify" });
+
+    try {
+      // Fetch last 50 orders
+      const response = await fetch("https://api.kiwify.com.br/v1/orders?status=paid&limit=50", {
+        headers: { "Authorization": `Bearer ${token}` }
+      });
+
+      if (!response.ok) throw new Error("Erro ao buscar pedidos");
+
+      const { data: orders } = await response.json();
+      const results = [];
+
+      for (const order of orders) {
+        if (order.status === "paid") {
+          const result = await processOrderDelivery(order.customer.email, order.id);
+          results.push({ email: order.customer.email, ...result });
+        }
+      }
+
+      res.json({ success: true, processed: results.length, details: results });
+    } catch (err) {
+      console.error("[KIWIFY API] Sync Error:", err);
+      res.status(500).json({ error: "Erro ao sincronizar pedidos" });
+    }
+  });
+
   // Kiwify Webhook Endpoint
   app.post("/api/kiwify-webhook", async (req, res) => {
     const { order_status, customer, order_id } = req.body;
@@ -322,78 +424,8 @@ async function startServer() {
     }
 
     try {
-      const customerEmail = customer?.email?.toLowerCase()?.trim();
-      if (!customerEmail) throw new Error("Email do cliente não fornecido.");
-
-      console.log(`[KIWIFY] Pagamento APROVADO. Processando entrega para ${customerEmail}`);
-      
-      // 1. Verificar se o cliente já recebeu um código para este e-mail recentemente (evitar duplicidade)
-      // Podemos buscar por códigos que foram usados por este e-mail
-      const existingCodesQuery = await firestore.collection("accessCodes")
-        .where("usedByEmail", "==", customerEmail)
-        .orderBy("usedAt", "desc")
-        .limit(1)
-        .get();
-
-      if (!existingCodesQuery.empty) {
-        const existingCode = existingCodesQuery.docs[0].data();
-        console.log(`[KIWIFY] Cliente ${customerEmail} já possui o código ${existingCode.code}. Reenviando.`);
-        
-        // Reenviar e-mail em caso de duplicidade
-        await sendAccessCodeEmail(customerEmail, existingCode.code);
-
-        return res.status(200).json({ 
-          success: true, 
-          message: "Código já entregue anteriormente", 
-          code: existingCode.code 
-        });
-      }
-
-      // 2. Tentar pegar um código do estoque (se houver)
-      const stockQuery = await firestore.collection("accessCodes")
-        .where("used", "==", false)
-        .limit(1)
-        .get();
-
-      let codeToDeliver: string;
-
-      if (!stockQuery.empty) {
-        const codeDoc = stockQuery.docs[0];
-        codeToDeliver = codeDoc.data().code;
-        
-        await codeDoc.ref.update({
-          used: true,
-          usedByEmail: customerEmail,
-          usedAt: admin.firestore.FieldValue.serverTimestamp(),
-          orderId: order_id || "manual"
-        });
-        console.log(`[KIWIFY] Código ${codeToDeliver} do estoque entregue para ${customerEmail}`);
-      } else {
-        // 3. Se não houver estoque, GERAR UM NOVO CÓDIGO na hora
-        codeToDeliver = Math.random().toString(36).substring(2, 10).toUpperCase();
-        const createdAt = new Date().toISOString();
-        const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(); // 30 dias
-
-        await firestore.collection("accessCodes").doc(codeToDeliver).set({
-          code: codeToDeliver,
-          createdAt,
-          expiresAt,
-          used: true,
-          usedByEmail: customerEmail,
-          usedAt: admin.firestore.FieldValue.serverTimestamp(),
-          orderId: order_id || "generated"
-        });
-        console.log(`[KIWIFY] Novo código ${codeToDeliver} GERADO e entregue para ${customerEmail}`);
-      }
-
-      // 4. Enviar e-mail profissional
-      await sendAccessCodeEmail(customerEmail, codeToDeliver);
-
-      res.status(200).json({ 
-        success: true, 
-        message: "Código entregue com sucesso", 
-        code: codeToDeliver 
-      });
+      const result = await processOrderDelivery(customer.email, order_id);
+      res.status(200).json(result);
     } catch (error) {
       console.error("[KIWIFY] Erro ao processar webhook:", error);
       res.status(500).json({ error: "Erro interno ao processar entrega" });

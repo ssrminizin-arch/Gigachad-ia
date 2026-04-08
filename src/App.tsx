@@ -79,6 +79,7 @@ export default function App() {
   const [isAdminMode, setIsAdminMode] = useState(false);
   const [accessCodes, setAccessCodes] = useState<AccessCode[]>([]);
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
+  const [isSyncing, setIsSyncing] = useState(false);
   
   const scrollRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -282,6 +283,31 @@ export default function App() {
       setMessages(prev => [...prev, { role: "model", content: "❌ Falha ao gerar códigos de acesso." }]);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const syncKiwifyOrders = async () => {
+    if (userProfile?.role !== 'admin' || isSyncing) return;
+    
+    setIsSyncing(true);
+    try {
+      const response = await fetch('/api/admin/sync-kiwify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: process.env.ADMIN_PASSWORD || "2011" })
+      });
+      
+      const data = await response.json();
+      if (data.success) {
+        alert(`✅ Sincronização concluída! ${data.processed} pedidos processados.`);
+      } else {
+        alert(`❌ Erro na sincronização: ${data.error}`);
+      }
+    } catch (error) {
+      console.error("Erro ao sincronizar Kiwify:", error);
+      alert("❌ Falha na conexão com o servidor.");
+    } finally {
+      setIsSyncing(false);
     }
   };
 
@@ -615,14 +641,27 @@ export default function App() {
               exit={{ opacity: 0, y: 20 }}
               className="space-y-6"
             >
-              <div className="flex items-center gap-3 mb-8">
-                <div className="p-3 bg-emerald-500/10 rounded-2xl border border-emerald-500/20">
-                  <Key className="w-6 h-6 text-emerald-500" />
+              <div className="flex items-center justify-between mb-8">
+                <div className="flex items-center gap-3">
+                  <div className="p-3 bg-emerald-500/10 rounded-2xl border border-emerald-500/20">
+                    <Key className="w-6 h-6 text-emerald-500" />
+                  </div>
+                  <div>
+                    <h2 className="text-xl font-black text-zinc-100 uppercase italic">Chaves de Acesso Ativas</h2>
+                    <p className="text-[10px] text-zinc-500 font-medium tracking-widest uppercase">Gerencie os códigos de 30 dias</p>
+                  </div>
                 </div>
-                <div>
-                  <h2 className="text-xl font-black text-zinc-100 uppercase italic">Chaves de Acesso Ativas</h2>
-                  <p className="text-[10px] text-zinc-500 font-medium tracking-widest uppercase">Gerencie os códigos de 30 dias</p>
-                </div>
+                <button
+                  onClick={syncKiwifyOrders}
+                  disabled={isSyncing}
+                  className={cn(
+                    "flex items-center gap-2 px-4 py-2 rounded-xl font-bold text-xs transition-all active:scale-95 disabled:opacity-50",
+                    theme === 'red-white' ? "bg-red-600 text-white" : "bg-emerald-600 text-black"
+                  )}
+                >
+                  <Zap className={cn("w-4 h-4", isSyncing && "animate-pulse")} />
+                  {isSyncing ? "Sincronizando..." : "Sincronizar Kiwify"}
+                </button>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
