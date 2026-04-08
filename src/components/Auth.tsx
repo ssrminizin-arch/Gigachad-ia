@@ -264,7 +264,7 @@ export function Auth({ onVerified }: AuthProps) {
               const isReservedForThisEmail = codeData.usedByEmail && codeData.usedByEmail.toLowerCase() === email.toLowerCase();
               const isAlreadyLinkedToUID = !!codeData.usedBy;
               
-              if (isAlreadyLinkedToUID && codeData.usedBy !== user?.uid) {
+              if (isAlreadyLinkedToUID && codeData.usedBy !== auth.currentUser?.uid) {
                 throw new Error('Este código já foi utilizado por outro usuário.');
               }
               

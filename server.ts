@@ -49,59 +49,74 @@ if (projectId) {
 const isVercel = process.env.VERCEL === "1";
 const dbPath = isVercel ? "/tmp/logs.db" : "logs.db";
 
-// Email Transporter Setup
-const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST,
-  port: parseInt(process.env.SMTP_PORT || "465"),
-  secure: process.env.SMTP_PORT === "465", // true for 465, false for other ports
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
-  },
-});
+// Email Transporter (Lazy Initialization)
+let transporter: any = null;
+
+function getTransporter() {
+  if (!transporter) {
+    const { SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS } = process.env;
+    if (!SMTP_HOST || !SMTP_PORT || !SMTP_USER || !SMTP_PASS) {
+      console.warn("[EMAIL] SMTP configuration missing. Email sending disabled.");
+      return null;
+    }
+    transporter = nodemailer.createTransport({
+      host: SMTP_HOST,
+      port: parseInt(SMTP_PORT || "587"),
+      secure: parseInt(SMTP_PORT || "587") === 465,
+      auth: {
+        user: SMTP_USER,
+        pass: SMTP_PASS.replace(/\s+/g, ""),
+      },
+    });
+  }
+  return transporter;
+}
 
 async function sendAccessCodeEmail(to: string, code: string) {
-  const siteUrl = "https://gigachad-ia-tot8.vercel.app";
-  
+  const t = getTransporter();
+  if (!t) return;
+
   const mailOptions = {
-    from: process.env.SMTP_FROM || '"GigaChad IA" <noreply@gigachad.ia>',
+    from: process.env.SMTP_FROM || `"GigaChad IA" <${process.env.SMTP_USER}>`,
     to,
-    subject: "Seu Código de Acesso - GigaChad IA 🗿",
+    subject: "Seu Acesso ao GigaChad IA Chegou! 🗿",
     html: `
-      <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #09090b; color: #f4f4f5; padding: 40px; border-radius: 20px; max-width: 600px; margin: auto; border: 1px solid #27272a;">
+      <div style="background-color: #09090b; color: #f4f4f5; font-family: sans-serif; padding: 40px; max-width: 600px; margin: 0 auto; border-radius: 24px; border: 1px solid #27272a;">
         <div style="text-align: center; margin-bottom: 30px;">
-          <h1 style="color: #10b981; font-size: 2.5rem; margin: 0; font-style: italic;">GIGACHAD IA 🗿</h1>
-          <p style="color: #71717a; font-size: 1.1rem;">Acesso Alpha Liberado</p>
+          <div style="font-size: 48px; margin-bottom: 10px;">🗿</div>
+          <h1 style="color: #ffffff; font-size: 24px; font-weight: 800; text-transform: uppercase; letter-spacing: 2px; font-style: italic; margin: 0;">GigaChad IA</h1>
+          <p style="color: #71717a; font-size: 10px; text-transform: uppercase; letter-spacing: 4px; margin-top: 5px;">Onde os fracos não têm vez</p>
         </div>
-        
-        <div style="background-color: #18181b; padding: 30px; border-radius: 15px; border: 1px solid #27272a; text-align: center;">
-          <p style="font-size: 1.1rem; margin-bottom: 20px;">Olá! Sua compra foi aprovada com sucesso.</p>
-          <p style="color: #71717a; margin-bottom: 10px;">Seu código de acesso exclusivo é:</p>
-          <div style="background-color: #09090b; border: 2px dashed #10b981; padding: 15px; font-size: 2rem; font-weight: bold; letter-spacing: 5px; color: #10b981; margin-bottom: 25px;">
+
+        <div style="background-color: #18181b; padding: 30px; border-radius: 16px; border: 1px solid #3f3f46; text-align: center;">
+          <p style="color: #a1a1aa; font-size: 16px; margin-bottom: 20px;">Seu pagamento foi confirmado. Aqui está sua chave de acesso de 30 dias:</p>
+          
+          <div style="background-color: #000000; color: #10b981; font-family: monospace; font-size: 32px; font-weight: bold; padding: 20px; border-radius: 12px; border: 1px solid #10b981; margin-bottom: 20px; letter-spacing: 4px;">
             ${code}
           </div>
-          <p style="color: #71717a; font-size: 0.9rem; margin-bottom: 30px;">Este código é válido por 30 dias a partir de hoje.</p>
-          
-          <a href="${siteUrl}" style="background-color: #10b981; color: #000; padding: 15px 30px; border-radius: 10px; text-decoration: none; font-weight: bold; font-size: 1.1rem; display: inline-block;">
-            ACESSAR GIGACHAD IA AGORA
+
+          <p style="color: #ef4444; font-size: 14px; font-weight: bold; margin-bottom: 20px;">
+            ⚠️ IMPORTANTE: Use este código com a conta do e-mail que você realizou a compra (${to}).
+          </p>
+
+          <a href="https://gigachad-ia-tot8.vercel.app" style="display: inline-block; background-color: #10b981; color: #000000; text-decoration: none; font-weight: 800; padding: 16px 32px; border-radius: 12px; text-transform: uppercase; letter-spacing: 1px;">
+            Acessar GigaChad IA
           </a>
         </div>
-        
-        <div style="margin-top: 40px; text-align: center; color: #71717a; font-size: 0.8rem;">
-          <p>Se você não realizou esta compra, ignore este e-mail.</p>
-          <p>&copy; 2026 GigaChad IA - Todos os direitos reservados.</p>
+
+        <div style="margin-top: 30px; text-align: center; color: #52525b; font-size: 12px;">
+          <p>Se tiver qualquer dúvida, responda a este e-mail.</p>
+          <p style="margin-top: 10px;">© 2026 GigaChad IA. Todos os direitos reservados.</p>
         </div>
       </div>
     `,
   };
 
   try {
-    const info = await transporter.sendMail(mailOptions);
-    console.log(`[EMAIL] Sucesso: Código enviado para ${to}. MessageId: ${info.messageId}`);
-    return true;
+    await t.sendMail(mailOptions);
+    console.log(`[EMAIL] Código enviado com sucesso para ${to}`);
   } catch (err) {
-    console.error(`[EMAIL] Erro ao enviar para ${to}:`, err);
-    return false;
+    console.error(`[EMAIL] Erro ao enviar e-mail para ${to}:`, err);
   }
 }
 
@@ -448,6 +463,25 @@ async function startServer() {
       res.status(405).json({ error: `Method ${req.method} not allowed. Use POST or DELETE.` });
     });
 
+  // Temporary Test Email Route
+  app.get("/api/test-email-now", async (req, res) => {
+    const testEmail = "ssrminizin@gmail.com";
+    const testCode = "GIGACHAD-TEST-123";
+    
+    console.log(`[TEST] Enviando e-mail de teste para ${testEmail}`);
+    try {
+      await sendAccessCodeEmail(testEmail, testCode);
+      res.json({ success: true, message: `E-mail de teste enviado para ${testEmail}` });
+    } catch (err) {
+      res.status(500).json({ success: false, error: "Erro ao enviar e-mail de teste" });
+    }
+  });
+
+  // Health check
+  app.get("/api/health", (req, res) => {
+    res.json({ status: "ok", isVercel, timestamp: new Date().toISOString() });
+  });
+
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production" && !isVercel) {
     const { createServer: createViteServer } = await import("vite");
@@ -471,25 +505,6 @@ async function startServer() {
       });
     }
   }
-
-  // Health check
-  app.get("/api/health", (req, res) => {
-    res.json({ status: "ok", isVercel, timestamp: new Date().toISOString() });
-  });
-
-  // Test Email Route (Remove in production if desired)
-  app.post("/api/admin/test-email", async (req, res) => {
-    const { password, email, code } = req.body;
-    const adminPassword = process.env.ADMIN_PASSWORD || "2011";
-    if (password !== adminPassword) return res.status(401).json({ error: "Unauthorized" });
-
-    const success = await sendAccessCodeEmail(email, code || "TEST-123");
-    if (success) {
-      res.json({ success: true, message: "E-mail de teste enviado!" });
-    } else {
-      res.status(500).json({ success: false, message: "Falha ao enviar e-mail." });
-    }
-  });
 
   if (!isVercel) {
     app.listen(PORT, "0.0.0.0", () => {
