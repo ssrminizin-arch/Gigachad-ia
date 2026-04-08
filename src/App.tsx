@@ -294,7 +294,7 @@ export default function App() {
       const response = await fetch('/api/admin/sync-kiwify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password: process.env.ADMIN_PASSWORD || "2011" })
+        body: JSON.stringify({ password: "2011" }) // Usando o padrão diretamente no cliente
       });
       
       const data = await response.json();
