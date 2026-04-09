@@ -1,251 +1,40 @@
 import express from "express";
+import { createServer as createViteServer } from "vite";
 import path from "path";
 import { fileURLToPath } from "url";
-import admin from "firebase-admin";
-import fs from "fs";
-import nodemailer from "nodemailer";
+import Database from "better-sqlite3";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Initialize Firebase Admin
-const firebaseConfigPath = path.join(process.cwd(), "firebase-applet-config.json");
-let firebaseConfig: any = {};
+// Initialize Database
+const db = new Database("logs.db");
+db.exec(`
+  CREATE TABLE IF NOT EXISTS access_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ip TEXT,
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+    user_agent TEXT
+  )
+`);
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS blacklist (
+    ip TEXT PRIMARY KEY,
+    reason TEXT,
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+  )
+`);
+
+// Migration: Add city and region columns if they don't exist
 try {
-  if (fs.existsSync(firebaseConfigPath)) {
-    firebaseConfig = JSON.parse(fs.readFileSync(firebaseConfigPath, "utf-8"));
-  }
-} catch (err) {
-  console.error("Failed to load firebase-applet-config.json:", err);
+  db.exec("ALTER TABLE access_logs ADD COLUMN city TEXT");
+  db.exec("ALTER TABLE access_logs ADD COLUMN region TEXT");
+} catch (e) {
+  // Columns likely already exist
 }
 
-// Fallback to env vars if file is missing or incomplete
-const projectId = firebaseConfig.projectId || process.env.FIREBASE_PROJECT_ID;
-const firestoreDatabaseId = firebaseConfig.firestoreDatabaseId || process.env.FIREBASE_DATABASE_ID || '(default)';
-
-let firestore: any = null;
-
-if (projectId) {
-  try {
-    if (!admin.apps.length) {
-      admin.initializeApp({
-        projectId: projectId,
-      });
-    }
-    firestore = admin.firestore();
-    if (firestoreDatabaseId && firestoreDatabaseId !== '(default)') {
-      // @ts-ignore
-      firestore.settings({ databaseId: firestoreDatabaseId });
-    }
-    console.log("[FIREBASE] Admin initialized successfully.");
-  } catch (err) {
-    console.error("[FIREBASE] Error initializing admin:", err);
-  }
-} else {
-  console.warn("[FIREBASE] Project ID missing. Database operations will fail.");
-}
-
-// Initialize Database (SQLite)
-const isVercel = process.env.VERCEL === "1";
-const dbPath = isVercel ? "/tmp/logs.db" : "logs.db";
-
-// Email Transporter (Lazy Initialization)
-let transporter: any = null;
-
-function getTransporter() {
-  if (!transporter) {
-    const { SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS } = process.env;
-    if (!SMTP_HOST || !SMTP_PORT || !SMTP_USER || !SMTP_PASS) {
-      console.warn("[EMAIL] SMTP configuration missing. Email sending disabled.");
-      return null;
-    }
-    transporter = nodemailer.createTransport({
-      host: SMTP_HOST,
-      port: parseInt(SMTP_PORT || "587"),
-      secure: parseInt(SMTP_PORT || "587") === 465,
-      auth: {
-        user: SMTP_USER,
-        pass: SMTP_PASS.replace(/\s+/g, ""),
-      },
-    });
-  }
-  return transporter;
-}
-
-async function sendAccessCodeEmail(to: string, code: string) {
-  const t = getTransporter();
-  if (!t) return;
-
-  const mailOptions = {
-    from: process.env.SMTP_FROM || `"GigaChad IA" <${process.env.SMTP_USER}>`,
-    to,
-    subject: "Seu Acesso ao GigaChad IA Chegou! 🗿",
-    html: `
-      <div style="background-color: #09090b; color: #f4f4f5; font-family: sans-serif; padding: 40px; max-width: 600px; margin: 0 auto; border-radius: 24px; border: 1px solid #27272a;">
-        <div style="text-align: center; margin-bottom: 30px;">
-          <div style="font-size: 48px; margin-bottom: 10px;">🗿</div>
-          <h1 style="color: #ffffff; font-size: 24px; font-weight: 800; text-transform: uppercase; letter-spacing: 2px; font-style: italic; margin: 0;">GigaChad IA</h1>
-          <p style="color: #71717a; font-size: 10px; text-transform: uppercase; letter-spacing: 4px; margin-top: 5px;">Onde os fracos não têm vez</p>
-        </div>
-
-        <div style="background-color: #18181b; padding: 30px; border-radius: 16px; border: 1px solid #3f3f46; text-align: center;">
-          <p style="color: #a1a1aa; font-size: 16px; margin-bottom: 20px;">Seu pagamento foi confirmado. Aqui está sua chave de acesso de 30 dias:</p>
-          
-          <div style="background-color: #000000; color: #10b981; font-family: monospace; font-size: 32px; font-weight: bold; padding: 20px; border-radius: 12px; border: 1px solid #10b981; margin-bottom: 20px; letter-spacing: 4px;">
-            ${code}
-          </div>
-
-          <p style="color: #ef4444; font-size: 14px; font-weight: bold; margin-bottom: 20px;">
-            ⚠️ IMPORTANTE: Use este código com a conta do e-mail que você realizou a compra (${to}).
-          </p>
-
-          <a href="https://gigachad-ia-tot8.vercel.app" style="display: inline-block; background-color: #10b981; color: #000000; text-decoration: none; font-weight: 800; padding: 16px 32px; border-radius: 12px; text-transform: uppercase; letter-spacing: 1px;">
-            Acessar GigaChad IA
-          </a>
-        </div>
-
-        <div style="margin-top: 30px; text-align: center; color: #52525b; font-size: 12px;">
-          <p>Se tiver qualquer dúvida, responda a este e-mail.</p>
-          <p style="margin-top: 10px;">© 2026 GigaChad IA. Todos os direitos reservados.</p>
-        </div>
-      </div>
-    `,
-  };
-
-  try {
-    await t.sendMail(mailOptions);
-    console.log(`[EMAIL] Código enviado com sucesso para ${to}`);
-  } catch (err) {
-    console.error(`[EMAIL] Erro ao enviar e-mail para ${to}:`, err);
-  }
-}
-
-let db: any;
-
-async function initDb() {
-  if (isVercel) {
-    console.log("[DATABASE] Running on Vercel, disabling SQLite to prevent crashes.");
-    db = {
-      prepare: () => ({
-        run: () => ({}),
-        get: () => undefined,
-        all: () => []
-      }),
-      exec: () => ({})
-    };
-    return;
-  }
-
-  try {
-    const { default: Database } = await import("better-sqlite3");
-    db = new Database(dbPath);
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS access_logs (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        ip TEXT,
-        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-        user_agent TEXT
-      )
-    `);
-
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS blacklist (
-        ip TEXT PRIMARY KEY,
-        reason TEXT,
-        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
-
-    // Migration: Add city and region columns if they don't exist
-    try {
-      db.exec("ALTER TABLE access_logs ADD COLUMN city TEXT");
-      db.exec("ALTER TABLE access_logs ADD COLUMN region TEXT");
-    } catch (e) {
-      // Columns likely already exist
-    }
-  } catch (err) {
-    console.error("[DATABASE] Failed to initialize SQLite. Logging will be disabled.", err);
-    // Mock db object to prevent crashes
-    db = {
-      prepare: () => ({
-        run: () => ({}),
-        get: () => undefined,
-        all: () => []
-      }),
-      exec: () => ({})
-    };
-  }
-}
-
-// Kiwify API Helpers
-let kiwifyAccessToken: string | null = null;
-let kiwifyTokenExpiry: number = 0;
-
-async function getKiwifyAccessToken() {
-  const { KIWIFY_CLIENT_ID, KIWIFY_CLIENT_SECRET } = process.env;
-  if (!KIWIFY_CLIENT_ID || !KIWIFY_CLIENT_SECRET) return null;
-
-  // Check if token is still valid
-  if (kiwifyAccessToken && Date.now() < kiwifyTokenExpiry) return kiwifyAccessToken;
-
-  try {
-    const response = await fetch("https://api.kiwify.com.br/v1/oauth/token", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        grant_type: "client_credentials",
-        client_id: KIWIFY_CLIENT_ID,
-        client_secret: KIWIFY_CLIENT_SECRET,
-      }),
-    });
-
-    if (response.ok) {
-      const data = await response.json();
-      kiwifyAccessToken = data.access_token;
-      kiwifyTokenExpiry = Date.now() + (data.expires_in * 1000) - 60000; // 1 min buffer
-      return kiwifyAccessToken;
-    }
-  } catch (err) {
-    console.error("[KIWIFY API] Auth Error:", err);
-  }
-  return null;
-}
-
-async function processOrderDelivery(email: string, orderId: string) {
-  const customerEmail = email.toLowerCase().trim();
-  
-  // 1. Check if already delivered
-  const existing = await firestore.collection("accessCodes")
-    .where("usedByEmail", "==", customerEmail)
-    .limit(1)
-    .get();
-
-  if (!existing.empty) {
-    const code = existing.docs[0].data().code;
-    await sendAccessCodeEmail(customerEmail, code);
-    return { success: true, message: "Reenviado", code };
-  }
-
-  // 2. Generate new code
-  const code = Math.random().toString(36).substring(2, 10).toUpperCase();
-  const createdAt = new Date().toISOString();
-  const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
-
-  await firestore.collection("accessCodes").doc(code).set({
-    code,
-    createdAt,
-    expiresAt,
-    used: true,
-    usedByEmail: customerEmail,
-    usedAt: admin.firestore.FieldValue.serverTimestamp(),
-    orderId: orderId || "api-sync"
-  });
-
-  await sendAccessCodeEmail(customerEmail, code);
-  return { success: true, message: "Entregue", code };
-}
-
-// Geolocation Cache
+// Simple Geolocation Cache to avoid rate limits
 const geoCache = new Map<string, { city: string, region: string }>();
 
 async function getGeoLocation(ip: string) {
@@ -308,12 +97,9 @@ async function backfillLogs() {
   }
 }
 
-const app = express();
-const PORT = 3000;
-
 async function startServer() {
-  // Initialize Database
-  await initDb();
+  const app = express();
+  const PORT = 3000;
 
   // Run backfill on startup
   backfillLogs();
@@ -379,66 +165,12 @@ async function startServer() {
     res.json({ status: "ok", message: "GigaChad Server is running" });
   });
 
-  // Kiwify API Sync Route
-  app.post("/api/admin/sync-kiwify", async (req, res) => {
-    const { password } = req.body;
-    const adminPassword = process.env.ADMIN_PASSWORD || "2011";
-    if (password !== adminPassword) return res.status(401).json({ error: "Unauthorized" });
-
-    const token = await getKiwifyAccessToken();
-    if (!token) return res.status(500).json({ error: "Falha na autenticação com Kiwify" });
-
-    try {
-      // Fetch last 50 orders
-      const response = await fetch("https://api.kiwify.com.br/v1/orders?status=paid&limit=50", {
-        headers: { "Authorization": `Bearer ${token}` }
-      });
-
-      if (!response.ok) throw new Error("Erro ao buscar pedidos");
-
-      const { data: orders } = await response.json();
-      const results = [];
-
-      for (const order of orders) {
-        if (order.status === "paid") {
-          const result = await processOrderDelivery(order.customer.email, order.id);
-          results.push({ email: order.customer.email, ...result });
-        }
-      }
-
-      res.json({ success: true, processed: results.length, details: results });
-    } catch (err) {
-      console.error("[KIWIFY API] Sync Error:", err);
-      res.status(500).json({ error: "Erro ao sincronizar pedidos" });
-    }
-  });
-
-  // Kiwify Webhook Endpoint
-  app.post("/api/kiwify-webhook", async (req, res) => {
-    const { order_status, customer, order_id } = req.body;
-
-    console.log(`[KIWIFY] Webhook recebido: ${order_status} para ${customer?.email} (Order: ${order_id})`);
-
-    if (order_status !== "paid") {
-      return res.status(200).send("OK");
-    }
-
-    try {
-      const result = await processOrderDelivery(customer.email, order_id);
-      res.status(200).json(result);
-    } catch (error) {
-      console.error("[KIWIFY] Erro ao processar webhook:", error);
-      res.status(500).json({ error: "Erro interno ao processar entrega" });
-    }
-  });
-
   // Admin Logs Route
   app.route(["/api/admin/logs", "/api/admin/logs/"])
     .post((req, res) => {
       const { password } = req.body;
-      const adminPassword = process.env.ADMIN_PASSWORD || "2011";
       
-      if (password !== adminPassword) {
+      if (password !== "2011") {
         return res.status(401).json({ error: "Unauthorized" });
       }
 
@@ -469,8 +201,7 @@ async function startServer() {
   app.route(["/api/admin/blacklist", "/api/admin/blacklist/"])
     .post((req, res) => {
       const { password, ip, reason } = req.body;
-      const adminPassword = process.env.ADMIN_PASSWORD || "2011";
-      if (password !== adminPassword) return res.status(401).json({ error: "Unauthorized" });
+      if (password !== "2011") return res.status(401).json({ error: "Unauthorized" });
 
       try {
         db.prepare("INSERT OR REPLACE INTO blacklist (ip, reason) VALUES (?, ?)").run(ip, reason);
@@ -481,8 +212,7 @@ async function startServer() {
     })
     .delete((req, res) => {
       const { password, ip } = req.body;
-      const adminPassword = process.env.ADMIN_PASSWORD || "2011";
-      if (password !== adminPassword) return res.status(401).json({ error: "Unauthorized" });
+      if (password !== "2011") return res.status(401).json({ error: "Unauthorized" });
 
       try {
         db.prepare("DELETE FROM blacklist WHERE ip = ?").run(ip);
@@ -495,28 +225,8 @@ async function startServer() {
       res.status(405).json({ error: `Method ${req.method} not allowed. Use POST or DELETE.` });
     });
 
-  // Temporary Test Email Route
-  app.get("/api/test-email-now", async (req, res) => {
-    const testEmail = "ssrminizin@gmail.com";
-    const testCode = "GIGACHAD-TEST-123";
-    
-    console.log(`[TEST] Enviando e-mail de teste para ${testEmail}`);
-    try {
-      await sendAccessCodeEmail(testEmail, testCode);
-      res.json({ success: true, message: `E-mail de teste enviado para ${testEmail}` });
-    } catch (err) {
-      res.status(500).json({ success: false, error: "Erro ao enviar e-mail de teste" });
-    }
-  });
-
-  // Health check
-  app.get("/api/health", (req, res) => {
-    res.json({ status: "ok", isVercel, timestamp: new Date().toISOString() });
-  });
-
   // Vite middleware for development
-  if (process.env.NODE_ENV !== "production" && !isVercel) {
-    const { createServer: createViteServer } = await import("vite");
+  if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
@@ -524,33 +234,18 @@ async function startServer() {
     app.use(vite.middlewares);
   } else {
     // Serve static files in production
-    const distPath = path.join(process.cwd(), "dist");
-    if (fs.existsSync(distPath)) {
-      app.use(express.static(distPath));
-      app.get("*", (req, res) => {
-        res.sendFile(path.join(distPath, "index.html"));
-      });
-    } else {
-      console.warn(`[SERVER] Dist path not found: ${distPath}`);
-      app.get("*", (req, res) => {
-        res.status(404).send("Application not built. Please run 'npm run build' first.");
-      });
-    }
-  }
-
-  if (!isVercel) {
-    app.listen(PORT, "0.0.0.0", () => {
-      console.log(`Server running on http://0.0.0.0:${PORT}`);
+    app.use(express.static(path.join(__dirname, "dist")));
+    app.get("*", (req, res) => {
+      res.sendFile(path.join(__dirname, "dist", "index.html"));
     });
   }
+
+  app.listen(PORT, "0.0.0.0", () => {
+    console.log(`Server running on http://0.0.0.0:${PORT}`);
+  });
 }
 
-const serverPromise = startServer().catch((err) => {
+startServer().catch((err) => {
   console.error("Failed to start server:", err);
-  if (!isVercel) process.exit(1);
+  process.exit(1);
 });
-
-export default async (req: any, res: any) => {
-  await serverPromise;
-  return app(req, res);
-};

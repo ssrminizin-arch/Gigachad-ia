@@ -5,22 +5,18 @@ import { cn } from "../lib/utils";
 import { AlertCircle, ChevronDown, ChevronUp, RefreshCcw, Copy, Check } from "lucide-react";
 import { useRef } from "react";
 
-import { UserRole, Theme } from "../types";
-
 interface ChatMessageProps {
   role: "user" | "model";
   content: string;
   imageData?: string;
   errorDetails?: string;
   onRetry?: () => void;
-  theme?: Theme;
 }
 
-export const ChatMessage = ({ role, content, imageData, errorDetails, onRetry, theme = 'original' }: ChatMessageProps) => {
+export const ChatMessage = ({ role, content, imageData, errorDetails, onRetry }: ChatMessageProps) => {
   const [showError, setShowError] = useState(false);
   const isUser = role === "user";
   const hasError = !!errorDetails;
-  const isRedWhite = theme === 'red-white';
 
   return (
     <motion.div
@@ -35,23 +31,20 @@ export const ChatMessage = ({ role, content, imageData, errorDetails, onRetry, t
         className={cn(
           "max-w-[90%] sm:max-w-[80%] px-5 py-4 rounded-2xl text-sm leading-relaxed shadow-lg",
           isUser
-            ? (isRedWhite ? "bg-red-600 text-white rounded-tr-none border border-red-500" : "bg-zinc-800 text-zinc-100 rounded-tr-none border border-zinc-700/50")
-            : (isRedWhite ? "bg-white text-zinc-900 rounded-tl-none border border-red-100" : "bg-zinc-900/80 text-zinc-300 rounded-tl-none border border-zinc-800 backdrop-blur-sm"),
+            ? "bg-zinc-800 text-zinc-100 rounded-tr-none border border-zinc-700/50"
+            : "bg-zinc-900/80 text-zinc-300 rounded-tl-none border border-zinc-800 backdrop-blur-sm",
           hasError && !isUser && "border-red-900/30 bg-red-950/10"
         )}
       >
-        <div className={cn(
-          "flex items-center justify-between mb-3 border-b pb-2",
-          isRedWhite ? "border-red-100" : "border-zinc-800/50"
-        )}>
+        <div className="flex items-center justify-between mb-3 border-b border-zinc-800/50 pb-2">
           <div className="flex items-center gap-2">
             <span className={cn(
               "text-[9px] font-black uppercase tracking-[0.2em]",
-              isUser ? (isRedWhite ? "text-red-200" : "text-zinc-400") : (hasError ? "text-red-500" : (isRedWhite ? "text-red-600" : "text-emerald-500"))
+              isUser ? "text-zinc-400" : (hasError ? "text-red-500" : "text-emerald-500")
             )}>
               {isUser ? "USUÁRIO" : "GIGACHAD"}
             </span>
-            {!isUser && !hasError && <span className={cn("w-1 h-1 rounded-full animate-pulse", isRedWhite ? "bg-red-600" : "bg-emerald-500")} />}
+            {!isUser && !hasError && <span className="w-1 h-1 rounded-full bg-emerald-500 animate-pulse" />}
             {!isUser && hasError && <AlertCircle className="w-2.5 h-2.5 text-red-500" />}
           </div>
           {!isUser && (
