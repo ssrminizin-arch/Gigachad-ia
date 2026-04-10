@@ -8,9 +8,36 @@
         "uid": { "type": "string", "description": "Firebase Auth UID" },
         "email": { "type": "string", "description": "User email" },
         "role": { "type": "string", "enum": ["admin", "user"], "description": "User role" },
-        "createdAt": { "type": "string", "format": "date-time", "description": "Account creation timestamp" }
+        "createdAt": { "type": "string", "format": "date-time", "description": "Account creation timestamp" },
+        "lastIp": { "type": "string", "description": "Last recorded IP address" },
+        "accessExpiresAt": { "type": "string", "format": "date-time", "description": "When the user's access expires" }
       },
       "required": ["uid", "email", "role", "createdAt"]
+    },
+    "Chat": {
+      "title": "Chat",
+      "description": "A conversation session",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Chat ID" },
+        "userId": { "type": "string", "description": "Owner UID" },
+        "title": { "type": "string", "description": "Chat title" },
+        "lastMessageAt": { "type": "string", "format": "date-time", "description": "Last message timestamp" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Creation timestamp" }
+      },
+      "required": ["id", "userId", "title", "lastMessageAt", "createdAt"]
+    },
+    "Message": {
+      "title": "Message",
+      "description": "A single message in a chat",
+      "type": "object",
+      "properties": {
+        "role": { "type": "string", "enum": ["user", "model"], "description": "Sender role" },
+        "content": { "type": "string", "description": "Message text" },
+        "imageData": { "type": "string", "description": "Base64 image data (optional)" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Message timestamp" }
+      },
+      "required": ["role", "content", "createdAt"]
     },
     "AccessCode": {
       "title": "AccessCode",
@@ -35,6 +62,14 @@
     "/accessCodes/{code}": {
       "schema": "AccessCode",
       "description": "Access codes for registration"
+    },
+    "/chats/{chatId}": {
+      "schema": "Chat",
+      "description": "User chat sessions"
+    },
+    "/chats/{chatId}/messages/{messageId}": {
+      "schema": "Message",
+      "description": "Messages within a chat"
     }
   }
 }

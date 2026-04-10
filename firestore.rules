@@ -2,6 +2,24 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Fields: uid, email, role, createdAt, lastIp, accessExpiresAt
+    //
+    // Collection: chats
+    // Fields: userId, title, createdAt, lastMessageAt
+    //
+    // Collection: messages
+    // Fields: role, content, imageData, createdAt
+    //
+    // Collection: accessCodes
+    // Fields: code, createdAt, expiresAt, used, usedBy, isPermanent
+    //
+    // ===============================================================
+
     // Helper Functions
     function isAuthenticated() {
       return request.auth != null;
@@ -14,22 +32,65 @@ service cloud.firestore {
     function isAdmin() {
       return isAuthenticated() && 
         (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
-         request.auth.token.email == "afizportapau@gmail.com");
+         (request.auth.token.email == "afizportapau@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    function isValidUser(data) {
+      return hasOnlyAllowedFields(['uid', 'email', 'role', 'createdAt', 'lastIp', 'accessExpiresAt', 'registeredWithCode']) &&
+             data.uid == request.auth.uid &&
+             data.role in ['admin', 'user'] &&
+             data.email is string && data.email.size() < 100;
+    }
+
+    function isValidChat(data) {
+      return hasOnlyAllowedFields(['userId', 'title', 'createdAt', 'lastMessageAt']) &&
+             data.userId == request.auth.uid &&
+             data.title is string && data.title.size() <= 100;
+    }
+
+    function isValidMessage(data) {
+      return hasOnlyAllowedFields(['role', 'content', 'imageData', 'createdAt']) &&
+             data.role in ['user', 'model'] &&
+             data.content is string && data.content.size() <= 20000 &&
+             (data.imageData == null || (data.imageData is string && data.imageData.size() < 1000000));
     }
 
     // Users Collection
     match /users/{userId} {
       allow read: if isOwner(userId) || isAdmin();
-      allow create: if isOwner(userId);
-      allow update: if isAdmin();
+      allow create: if isOwner(userId) && isValidUser(request.resource.data);
+      allow update: if (isOwner(userId) && isValidUser(request.resource.data)) || isAdmin();
     }
 
     // Access Codes Collection
     match /accessCodes/{code} {
-      // Allow anyone to check if a code is valid (not used and not expired)
       allow get: if true; 
       allow list: if isAdmin();
-      allow create, update, delete: if isAdmin();
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin() || (
+        isAuthenticated() && 
+        !resource.data.used && 
+        request.resource.data.used == true && 
+        request.resource.data.usedBy == request.auth.uid &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['used', 'usedBy'])
+      );
+    }
+
+    // Chats Collection
+    match /chats/{chatId} {
+      allow read, delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      allow create: if isAuthenticated() && isValidChat(request.resource.data);
+      allow update: if isAuthenticated() && resource.data.userId == request.auth.uid && isValidChat(request.resource.data);
+
+      // Messages Subcollection
+      match /messages/{messageId} {
+        allow read: if isAuthenticated() && get(/databases/$(database)/documents/chats/$(chatId)).data.userId == request.auth.uid;
+        allow create: if isAuthenticated() && get(/databases/$(database)/documents/chats/$(chatId)).data.userId == request.auth.uid && isValidMessage(request.resource.data);
+      }
     }
   }
 }

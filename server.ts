@@ -1,40 +1,111 @@
 import express from "express";
-import { createServer as createViteServer } from "vite";
 import path from "path";
 import { fileURLToPath } from "url";
-import Database from "better-sqlite3";
+import admin from "firebase-admin";
+import fs from "fs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Initialize Database
-const db = new Database("logs.db");
-db.exec(`
-  CREATE TABLE IF NOT EXISTS access_logs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    ip TEXT,
-    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-    user_agent TEXT
-  )
-`);
-
-db.exec(`
-  CREATE TABLE IF NOT EXISTS blacklist (
-    ip TEXT PRIMARY KEY,
-    reason TEXT,
-    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-  )
-`);
-
-// Migration: Add city and region columns if they don't exist
+// Initialize Firebase Admin
+const firebaseConfigPath = path.join(process.cwd(), "firebase-applet-config.json");
+let firebaseConfig: any = {};
 try {
-  db.exec("ALTER TABLE access_logs ADD COLUMN city TEXT");
-  db.exec("ALTER TABLE access_logs ADD COLUMN region TEXT");
-} catch (e) {
-  // Columns likely already exist
+  if (fs.existsSync(firebaseConfigPath)) {
+    firebaseConfig = JSON.parse(fs.readFileSync(firebaseConfigPath, "utf-8"));
+  }
+} catch (err) {
+  console.error("Failed to load firebase-applet-config.json:", err);
 }
 
-// Simple Geolocation Cache to avoid rate limits
+// Fallback to env vars if file is missing or incomplete
+const projectId = firebaseConfig.projectId || process.env.FIREBASE_PROJECT_ID;
+const firestoreDatabaseId = firebaseConfig.firestoreDatabaseId || process.env.FIREBASE_DATABASE_ID || '(default)';
+
+let firestore: any = null;
+
+if (projectId) {
+  try {
+    if (!admin.apps.length) {
+      admin.initializeApp({
+        projectId: projectId,
+      });
+    }
+    firestore = admin.firestore();
+    if (firestoreDatabaseId && firestoreDatabaseId !== '(default)') {
+      // @ts-ignore
+      firestore.settings({ databaseId: firestoreDatabaseId });
+    }
+    console.log("[FIREBASE] Admin initialized successfully.");
+  } catch (err) {
+    console.error("[FIREBASE] Error initializing admin:", err);
+  }
+} else {
+  console.warn("[FIREBASE] Project ID missing. Database operations will fail.");
+}
+
+// Initialize Database (SQLite)
+const isVercel = process.env.VERCEL === "1";
+const dbPath = isVercel ? "/tmp/logs.db" : "logs.db";
+
+let db: any;
+
+async function initDb() {
+  if (isVercel) {
+    console.log("[DATABASE] Running on Vercel, disabling SQLite to prevent crashes.");
+    db = {
+      prepare: () => ({
+        run: () => ({}),
+        get: () => undefined,
+        all: () => []
+      }),
+      exec: () => ({})
+    };
+    return;
+  }
+
+  try {
+    const { default: Database } = await import("better-sqlite3");
+    db = new Database(dbPath);
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS access_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ip TEXT,
+        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+        user_agent TEXT
+      )
+    `);
+
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS blacklist (
+        ip TEXT PRIMARY KEY,
+        reason TEXT,
+        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // Migration: Add city and region columns if they don't exist
+    try {
+      db.exec("ALTER TABLE access_logs ADD COLUMN city TEXT");
+      db.exec("ALTER TABLE access_logs ADD COLUMN region TEXT");
+    } catch (e) {
+      // Columns likely already exist
+    }
+  } catch (err) {
+    console.error("[DATABASE] Failed to initialize SQLite. Logging will be disabled.", err);
+    // Mock db object to prevent crashes
+    db = {
+      prepare: () => ({
+        run: () => ({}),
+        get: () => undefined,
+        all: () => []
+      }),
+      exec: () => ({})
+    };
+  }
+}
+
+// Geolocation Cache
 const geoCache = new Map<string, { city: string, region: string }>();
 
 async function getGeoLocation(ip: string) {
@@ -97,9 +168,12 @@ async function backfillLogs() {
   }
 }
 
+const app = express();
+const PORT = 3000;
+
 async function startServer() {
-  const app = express();
-  const PORT = 3000;
+  // Initialize Database
+  await initDb();
 
   // Run backfill on startup
   backfillLogs();
@@ -165,12 +239,102 @@ async function startServer() {
     res.json({ status: "ok", message: "GigaChad Server is running" });
   });
 
+  // Kiwify Webhook Endpoint
+  app.post("/api/kiwify-webhook", async (req, res) => {
+    const { order_status, customer, order_id } = req.body;
+
+    console.log(`[KIWIFY] Webhook recebido: ${order_status} para ${customer?.email} (Order: ${order_id})`);
+
+    if (order_status !== "paid") {
+      return res.status(200).send("OK");
+    }
+
+    try {
+      const customerEmail = customer?.email?.toLowerCase()?.trim();
+      if (!customerEmail) throw new Error("Email do cliente não fornecido.");
+
+      console.log(`[KIWIFY] Pagamento APROVADO. Processando entrega para ${customerEmail}`);
+      
+      // 1. Verificar se o cliente já recebeu um código para este e-mail recentemente (evitar duplicidade)
+      // Podemos buscar por códigos que foram usados por este e-mail
+      const existingCodesQuery = await firestore.collection("accessCodes")
+        .where("usedByEmail", "==", customerEmail)
+        .orderBy("usedAt", "desc")
+        .limit(1)
+        .get();
+
+      if (!existingCodesQuery.empty) {
+        const existingCode = existingCodesQuery.docs[0].data();
+        console.log(`[KIWIFY] Cliente ${customerEmail} já possui o código ${existingCode.code}. Reenviando.`);
+        
+        // Reenviar e-mail em caso de duplicidade
+        // sendAccessCodeEmail(customerEmail, existingCode.code);
+
+        return res.status(200).json({ 
+          success: true, 
+          message: "Código já entregue anteriormente", 
+          code: existingCode.code 
+        });
+      }
+
+      // 2. Tentar pegar um código do estoque (se houver)
+      const stockQuery = await firestore.collection("accessCodes")
+        .where("used", "==", false)
+        .limit(1)
+        .get();
+
+      let codeToDeliver: string;
+
+      if (!stockQuery.empty) {
+        const codeDoc = stockQuery.docs[0];
+        codeToDeliver = codeDoc.data().code;
+        
+        await codeDoc.ref.update({
+          used: true,
+          usedByEmail: customerEmail,
+          usedAt: admin.firestore.FieldValue.serverTimestamp(),
+          orderId: order_id || "manual"
+        });
+        console.log(`[KIWIFY] Código ${codeToDeliver} do estoque entregue para ${customerEmail}`);
+      } else {
+        // 3. Se não houver estoque, GERAR UM NOVO CÓDIGO na hora
+        codeToDeliver = Math.random().toString(36).substring(2, 10).toUpperCase();
+        const createdAt = new Date().toISOString();
+        const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(); // 30 dias
+
+        await firestore.collection("accessCodes").doc(codeToDeliver).set({
+          code: codeToDeliver,
+          createdAt,
+          expiresAt,
+          used: true,
+          usedByEmail: customerEmail,
+          usedAt: admin.firestore.FieldValue.serverTimestamp(),
+          orderId: order_id || "generated"
+        });
+        console.log(`[KIWIFY] Novo código ${codeToDeliver} GERADO e entregue para ${customerEmail}`);
+      }
+
+      // 4. Enviar e-mail profissional
+      // sendAccessCodeEmail(customerEmail, codeToDeliver);
+
+      res.status(200).json({ 
+        success: true, 
+        message: "Código entregue com sucesso", 
+        code: codeToDeliver 
+      });
+    } catch (error) {
+      console.error("[KIWIFY] Erro ao processar webhook:", error);
+      res.status(500).json({ error: "Erro interno ao processar entrega" });
+    }
+  });
+
   // Admin Logs Route
   app.route(["/api/admin/logs", "/api/admin/logs/"])
     .post((req, res) => {
       const { password } = req.body;
+      const adminPassword = process.env.ADMIN_PASSWORD || "2011";
       
-      if (password !== "2011") {
+      if (password !== adminPassword) {
         return res.status(401).json({ error: "Unauthorized" });
       }
 
@@ -201,7 +365,8 @@ async function startServer() {
   app.route(["/api/admin/blacklist", "/api/admin/blacklist/"])
     .post((req, res) => {
       const { password, ip, reason } = req.body;
-      if (password !== "2011") return res.status(401).json({ error: "Unauthorized" });
+      const adminPassword = process.env.ADMIN_PASSWORD || "2011";
+      if (password !== adminPassword) return res.status(401).json({ error: "Unauthorized" });
 
       try {
         db.prepare("INSERT OR REPLACE INTO blacklist (ip, reason) VALUES (?, ?)").run(ip, reason);
@@ -212,7 +377,8 @@ async function startServer() {
     })
     .delete((req, res) => {
       const { password, ip } = req.body;
-      if (password !== "2011") return res.status(401).json({ error: "Unauthorized" });
+      const adminPassword = process.env.ADMIN_PASSWORD || "2011";
+      if (password !== adminPassword) return res.status(401).json({ error: "Unauthorized" });
 
       try {
         db.prepare("DELETE FROM blacklist WHERE ip = ?").run(ip);
@@ -226,7 +392,8 @@ async function startServer() {
     });
 
   // Vite middleware for development
-  if (process.env.NODE_ENV !== "production") {
+  if (process.env.NODE_ENV !== "production" && !isVercel) {
+    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
@@ -234,18 +401,38 @@ async function startServer() {
     app.use(vite.middlewares);
   } else {
     // Serve static files in production
-    app.use(express.static(path.join(__dirname, "dist")));
-    app.get("*", (req, res) => {
-      res.sendFile(path.join(__dirname, "dist", "index.html"));
-    });
+    const distPath = path.join(process.cwd(), "dist");
+    if (fs.existsSync(distPath)) {
+      app.use(express.static(distPath));
+      app.get("*", (req, res) => {
+        res.sendFile(path.join(distPath, "index.html"));
+      });
+    } else {
+      console.warn(`[SERVER] Dist path not found: ${distPath}`);
+      app.get("*", (req, res) => {
+        res.status(404).send("Application not built. Please run 'npm run build' first.");
+      });
+    }
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://0.0.0.0:${PORT}`);
+  // Health check
+  app.get("/api/health", (req, res) => {
+    res.json({ status: "ok", isVercel, timestamp: new Date().toISOString() });
   });
+
+  if (!isVercel) {
+    app.listen(PORT, "0.0.0.0", () => {
+      console.log(`Server running on http://0.0.0.0:${PORT}`);
+    });
+  }
 }
 
-startServer().catch((err) => {
+const serverPromise = startServer().catch((err) => {
   console.error("Failed to start server:", err);
-  process.exit(1);
+  if (!isVercel) process.exit(1);
 });
+
+export default async (req: any, res: any) => {
+  await serverPromise;
+  return app(req, res);
+};
